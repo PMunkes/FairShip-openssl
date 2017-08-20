@@ -1,5 +1,5 @@
 /* ====================================================================
- * Copyright (c) 2007 The OpenSSL Project.  All rights reserved.
+ * Copyright (c) 2011 The OpenSSL Project.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,49 +52,128 @@
 
 #define OPENSSL_FIPSAPI
 
-#include <openssl/rand.h>
-#include <openssl/fips.h>
 #include <openssl/fips_rand.h>
 #include <openssl/objects.h>
 
 #ifdef OPENSSL_SYS_WIN32
-#define RESP_EOL        "\n"
+#define RESP_EOL	"\n"
 #else
-#define RESP_EOL        "\r\n"
+#define RESP_EOL	"\r\n"
 #endif
 
-void fips_algtest_init_nofips(void)
+#ifndef FIPS_AUTH_OFFICER_PASS
+#define FIPS_AUTH_OFFICER_PASS	"Default FIPS Crypto Officer Password"
+#endif
+
+#ifndef FIPS_AUTH_USER_PASS
+#define FIPS_AUTH_USER_PASS	"Default FIPS Crypto User Password"
+#endif
+
+
+int hex2bin(const char *in, unsigned char *out);
+unsigned char *hex2bin_m(const char *in, long *plen);
+int do_hex2bn(BIGNUM **pr, const char *in);
+int do_bn_print(FILE *out, const BIGNUM *bn);
+int do_bn_print_name(FILE *out, const char *name, const BIGNUM *bn);
+int parse_line(char **pkw, char **pval, char *linebuf, char *olinebuf);
+int parse_line2(char **pkw, char **pval, char *linebuf, char *olinebuf, int eol);
+BIGNUM *hex2bn(const char *in);
+int tidy_line(char *linebuf, char *olinebuf);
+int copy_line(const char *in, FILE *ofp);
+int bint2bin(const char *in, int len, unsigned char *out);
+int bin2bint(const unsigned char *in,int len,char *out);
+void PrintValue(char *tag, unsigned char *val, int len);
+void OutputValue(char *tag, unsigned char *val, int len, FILE *rfp,int bitmode);
+void fips_algtest_init(void);
+void do_entropy_stick(void);
+int fips_strncasecmp(const char *str1, const char *str2, size_t n);
+int fips_strcasecmp(const char *str1, const char *str2);
+
+static int no_err;
+
+static void put_err_cb(int lib, int func,int reason,const char *file,int line)
 	{
-	return;
+	if (no_err)
+		return;
+	fprintf(stderr, "ERROR:%08lX:lib=%d,func=%d,reason=%d"
+				":file=%s:line=%d\n",
+			ERR_PACK(lib, func, reason),
+			lib, func, reason, file, line);
+	}
+
+static void add_err_cb(int num, va_list args)
+	{
+	int i;
+	char *str;
+	if (no_err)
+		return;
+	fputs("\t", stderr);
+	for (i = 0; i < num; i++)
+		{
+		str = va_arg(args, char *);
+		if (str)
+			fputs(str, stderr);
+		}
+	fputs("\n", stderr);
+	}
+
+/* Dummy Entropy to keep DRBG happy. WARNING: THIS IS TOTALLY BOGUS
+ * HAS ZERO SECURITY AND MUST NOT BE USED IN REAL APPLICATIONS.
+ */
+
+static unsigned char dummy_entropy[1024];
+
+static size_t dummy_cb(DRBG_CTX *ctx, unsigned char **pout,
+                                int entropy, size_t min_len, size_t max_len)
+	{
+	*pout = dummy_entropy;
+	return min_len;
+	}
+
+static int entropy_stick = 0;
+
+static void fips_algtest_init_nofips(void)
+	{
+	DRBG_CTX *ctx;
+	size_t i;
+	FIPS_set_error_callbacks(put_err_cb, add_err_cb);
+	for (i = 0; i < sizeof(dummy_entropy); i++)
+		dummy_entropy[i] = i & 0xff;
+	if (entropy_stick)
+		memcpy(dummy_entropy + 32, dummy_entropy + 16, 16);
+	ctx = FIPS_get_default_drbg();
+	FIPS_drbg_init(ctx, NID_aes_256_ctr, DRBG_FLAG_CTR_USE_DF);
+	FIPS_drbg_set_callbacks(ctx, dummy_cb, 0, 16, dummy_cb, 0);
+	FIPS_drbg_instantiate(ctx, dummy_entropy, 10);
+	FIPS_rand_set_method(FIPS_drbg_method());
+	}
+
+void do_entropy_stick(void)
+	{
+	entropy_stick = 1;
 	}
 
 void fips_algtest_init(void)
-        {
-        if (!FIPS_mode_set(1))
-                {
-                fprintf(stderr, "Error entering FIPS mode\n");
-                exit(1);
-                }
-        }
-
-void do_print_errors(void)
 	{
-	const char *file, *data;
-	int line, flags;
-	unsigned long l;
-	while ((l = ERR_get_error_line_data(&file, &line, &data, &flags)))
+	fips_algtest_init_nofips();
+	if (!FIPS_module_mode_set(1, FIPS_AUTH_USER_PASS))
 		{
-		fprintf(stderr, "ERROR:%lx:lib=%d,func=%d,reason=%d"
-				":file=%s:line=%d:%s\n",
-			l, ERR_GET_LIB(l), ERR_GET_FUNC(l), ERR_GET_REASON(l),
-			file, line, flags & ERR_TXT_STRING ? data : "");
+		fprintf(stderr, "Error entering FIPS mode\n");
+		exit(1);
 		}
 	}
 
 int hex2bin(const char *in, unsigned char *out)
     {
-    int n1, n2;
+    int n1, n2, isodd = 0;
     unsigned char ch;
+
+    n1 = strlen(in);
+    if (in[n1 - 1] == '\n')
+	n1--;
+
+    if (n1 & 1)
+	isodd = 1;
 
     for (n1=0,n2=0 ; in[n1] && in[n1] != '\n' ; )
 	{ /* first byte */
@@ -111,6 +190,15 @@ int hex2bin(const char *in, unsigned char *out)
 	    out[n2++]=ch;
 	    break;
 	    }
+	/* If input is odd length first digit is least significant: assumes
+	 * all digits valid hex and null terminated which is true for the
+	 * strings we pass.
+	 */
+	if (n1 == 1 && isodd)
+		{
+		out[n2++] = ch;
+		continue;
+		}
 	out[n2] = ch << 4;
 	/* second byte */
 	if ((in[n1] >= '0') && (in[n1] <= '9'))
@@ -129,6 +217,11 @@ int hex2bin(const char *in, unsigned char *out)
 unsigned char *hex2bin_m(const char *in, long *plen)
 	{
 	unsigned char *p;
+	if (strlen(in) == 0)
+		{
+		*plen = 0;
+		return OPENSSL_malloc(1);
+		}
 	p = OPENSSL_malloc((strlen(in) + 1)/2);
 	*plen = hex2bin(in, p);
 	return p;
@@ -152,7 +245,7 @@ int do_hex2bn(BIGNUM **pr, const char *in)
 	return r;
 	}
 
-int do_bn_print(FILE *out, BIGNUM *bn)
+int do_bn_print(FILE *out, const BIGNUM *bn)
 	{
 	int len, i;
 	unsigned char *tmp;
@@ -176,18 +269,23 @@ int do_bn_print(FILE *out, BIGNUM *bn)
 	return 1;
 	}
 
-int do_bn_print_name(FILE *out, const char *name, BIGNUM *bn)
+int do_bn_print_name(FILE *out, const char *name, const BIGNUM *bn)
 	{
 	int r;
 	fprintf(out, "%s = ", name);
 	r = do_bn_print(out, bn);
 	if (!r)
 		return 0;
-	fputs("\n", out);
+	fputs(RESP_EOL, out);
 	return 1;
 	}
 
 int parse_line(char **pkw, char **pval, char *linebuf, char *olinebuf)
+	{
+	return parse_line2(pkw, pval, linebuf, olinebuf, 1);
+	}
+
+int parse_line2(char **pkw, char **pval, char *linebuf, char *olinebuf, int eol)
 	{
 	char *keyword, *value, *p, *q;
 	strcpy(linebuf, olinebuf);
@@ -219,6 +317,9 @@ int parse_line(char **pkw, char **pval, char *linebuf, char *olinebuf)
 	/* Remove trailing space from value */
 	p = value + strlen(value) - 1;
 
+	if (eol && *p != '\n')
+		fprintf(stderr, "Warning: missing EOL\n");
+
 	while (*p == '\n' || isspace((unsigned char)*p))
 		*p-- = 0;
 
@@ -235,36 +336,6 @@ BIGNUM *hex2bn(const char *in)
 	return NULL;
 
     return p;
-    }
-
-int bin2hex(const unsigned char *in,int len,char *out)
-    {
-    int n1, n2;
-    unsigned char ch;
-
-    for (n1=0,n2=0 ; n1 < len ; ++n1)
-	{
-	ch=in[n1] >> 4;
-	if (ch <= 0x09)
-	    out[n2++]=ch+'0';
-	else
-	    out[n2++]=ch-10+'a';
-	ch=in[n1] & 0x0f;
-	if(ch <= 0x09)
-	    out[n2++]=ch+'0';
-	else
-	    out[n2++]=ch-10+'a';
-	}
-    out[n2]='\0';
-    return n2;
-    }
-
-void pv(const char *tag,const unsigned char *val,int len)
-    {
-    char obuf[2048];
-
-    bin2hex(val,len,obuf);
-    printf("%s = %s\n",tag,obuf);
     }
 
 /* To avoid extensive changes to test program at this stage just convert
@@ -321,6 +392,20 @@ int tidy_line(char *linebuf, char *olinebuf)
 
 	return 1;
 	}
+/* Copy supplied line to ofp replacing \n with \r\n */
+int copy_line(const char *in, FILE *ofp)
+	{
+	const char *p;
+	p = strchr(in, '\n');
+	if (p)
+		{
+		fwrite(in, 1, (size_t)(p - in), ofp);
+		fputs(RESP_EOL, ofp);
+		}
+	else
+		fputs(in, ofp);
+	return 1;
+	}
 
 /* NB: this return the number of _bits_ read */
 int bint2bin(const char *in, int len, unsigned char *out)
@@ -347,11 +432,8 @@ int bin2bint(const unsigned char *in,int len,char *out)
 
 void PrintValue(char *tag, unsigned char *val, int len)
 {
-#if VERBOSE
-  char obuf[2048];
-  int olen;
-  olen = bin2hex(val, len, obuf);
-  printf("%s = %.*s\n", tag, olen, obuf);
+#ifdef VERBOSE
+	OutputValue(tag, val, len, stdout, 0);
 #endif
 }
 
@@ -361,16 +443,52 @@ void OutputValue(char *tag, unsigned char *val, int len, FILE *rfp,int bitmode)
     int olen;
 
     if(bitmode)
+	{
 	olen=bin2bint(val,len,obuf);
+    	fprintf(rfp, "%s = %.*s" RESP_EOL, tag, olen, obuf);
+	}
     else
-	olen=bin2hex(val,len,obuf);
+	{
+	int i;
+    	fprintf(rfp, "%s = ", tag);
+	for (i = 0; i < len; i++)
+		fprintf(rfp, "%02x", val[i]);
+	fputs(RESP_EOL, rfp);
+	}
 
-    fprintf(rfp, "%s = %.*s\n", tag, olen, obuf);
 #if VERBOSE
     printf("%s = %.*s\n", tag, olen, obuf);
 #endif
     }
 
+/* Not all platforms support strcasecmp and strncasecmp: implement versions
+ * in here to avoid need to include them in the validated module. Taken
+ * from crypto/o_str.c written by Richard Levitte (richard@levitte.org)
+ */
 
-#endif /* FIPS_UTL_H */
+int fips_strncasecmp(const char *str1, const char *str2, size_t n)
+	{
+	while (*str1 && *str2 && n)
+		{
+		int res = toupper(*str1) - toupper(*str2);
+		if (res) return res < 0 ? -1 : 1;
+		str1++;
+		str2++;
+		n--;
+		}
+	if (n == 0)
+		return 0;
+	if (*str1)
+		return 1;
+	if (*str2)
+		return -1;
+	return 0;
+	}
 
+int fips_strcasecmp(const char *str1, const char *str2)
+	{
+	return fips_strncasecmp(str1, str2, (size_t)-1);
+	}
+
+
+#endif

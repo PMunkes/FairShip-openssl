@@ -1,5 +1,5 @@
 /* fips_rsa_sign.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2007.
  */
 /* ====================================================================
@@ -56,10 +56,14 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <string.h>
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
+#include <openssl/bn.h>
 #include <openssl/err.h>
+#include <openssl/fips.h>
 
 /* Minimal FIPS versions of FIPS_rsa_new() and FIPS_rsa_free: to
  * reduce external dependencies. 
@@ -94,7 +98,6 @@ void FIPS_rsa_free(RSA *r)
 	if (r->iqmp != NULL) BN_clear_free(r->iqmp);
 	if (r->blinding != NULL) BN_BLINDING_free(r->blinding);
 	if (r->mt_blinding != NULL) BN_BLINDING_free(r->mt_blinding);
-	if (r->bignum_data != NULL) OPENSSL_free_locked(r->bignum_data);
 	OPENSSL_free(r);
 	}
 

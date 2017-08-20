@@ -47,6 +47,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <string.h>
 #include <openssl/err.h>
 #include <openssl/fips.h>
@@ -54,13 +56,14 @@
 #include <openssl/sha.h>
 
 #ifdef OPENSSL_FIPS
-static char test[][60]=
+static const unsigned char test[][60]=
     {
     "",
     "abc",
     "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
     };
 
+__fips_constseg
 static const unsigned char ret[][SHA_DIGEST_LENGTH]=
     {
     { 0xda,0x39,0xa3,0xee,0x5e,0x6b,0x4b,0x0d,0x32,0x55,
@@ -71,27 +74,21 @@ static const unsigned char ret[][SHA_DIGEST_LENGTH]=
       0x4a,0xa1,0xf9,0x51,0x29,0xe5,0xe5,0x46,0x70,0xf1 },
     };
 
-void FIPS_corrupt_sha1()
-    {
-    test[2][0]++;
-    }
-
 int FIPS_selftest_sha1()
-    {
-    int n;
-
-    for(n=0 ; n<sizeof(test)/sizeof(test[0]) ; ++n)
 	{
-	unsigned char md[SHA_DIGEST_LENGTH];
-
-	EVP_Digest(test[n],strlen(test[n]),md, NULL, EVP_sha1(), NULL);
-	if(memcmp(md,ret[n],sizeof md))
-	    {
-	    FIPSerr(FIPS_F_FIPS_SELFTEST_SHA1,FIPS_R_SELFTEST_FAILED);
-	    return 0;
-	    }
-	}
-    return 1;
-    }
+	int rv = 1;
+	size_t i;
+	
+	for(i=0 ; i <sizeof(test)/sizeof(test[0]) ; i++)
+		{
+		if (!fips_pkey_signature_test(FIPS_TEST_DIGEST, NULL,
+						test[i], 0,
+						ret[i], 20,
+						EVP_sha1(), 0,
+						"SHA1 Digest"))
+			rv = 0;
+	    	}
+    	return rv;
+    	}
 
 #endif

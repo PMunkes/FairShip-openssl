@@ -1,5 +1,5 @@
 /* fips_rsastest.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2005.
  */
 /* ====================================================================
@@ -56,6 +56,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -63,7 +65,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
-#include <openssl/x509v3.h>
+#include <openssl/bn.h>
 
 #ifndef OPENSSL_FIPS
 
@@ -75,6 +77,8 @@ int main(int argc, char *argv[])
 
 #else
 
+#include <openssl/rsa.h>
+#include <openssl/fips.h>
 #include "fips_utl.h"
 
 static int rsa_stest(FILE *out, FILE *in, int Saltlen);
@@ -142,9 +146,6 @@ int main(int argc, char **argv)
 		ret = 0;
 
 	end:
-
-	if (ret)
-		do_print_errors();
 
 	if (in && (in != stdin))
 		fclose(in);
@@ -279,9 +280,9 @@ int rsa_stest(FILE *out, FILE *in, int Saltlen)
 			BN_free(bn_e);
 			fputs("n = ", out);
 			do_bn_print(out, rsa->n);
-			fputs("\ne = ", out);
+			fputs(RESP_EOL "e = ", out);
 			do_bn_print(out, rsa->e);
-			fputs("\n", out);
+			fputs(RESP_EOL, out);
 			current_keylen = keylen;
 			}
 
@@ -322,46 +323,38 @@ static int rsa_printsig(FILE *out, RSA *rsa, const EVP_MD *dgst,
 	{
 	int ret = 0;
 	unsigned char *sigbuf = NULL;
-	int i, siglen;
+	int i, siglen, pad_mode;
 	/* EVP_PKEY structure */
-	EVP_PKEY pk;
-	EVP_MD_CTX ctx;
-	pk.type = EVP_PKEY_RSA;
-	pk.pkey.rsa = rsa;
 
 	siglen = RSA_size(rsa);
 	sigbuf = OPENSSL_malloc(siglen);
 	if (!sigbuf)
 		goto error;
 
-	EVP_MD_CTX_init(&ctx);
-
 	if (Saltlen >= 0)
-		{
-		M_EVP_MD_CTX_set_flags(&ctx,
-			EVP_MD_CTX_FLAG_PAD_PSS | (Saltlen << 16));
-		}
+		pad_mode = RSA_PKCS1_PSS_PADDING;
 	else if (Saltlen == -2)
-		M_EVP_MD_CTX_set_flags(&ctx, EVP_MD_CTX_FLAG_PAD_X931);
-	if (!EVP_SignInit_ex(&ctx, dgst, NULL))
-		goto error;
-	if (!EVP_SignUpdate(&ctx, Msg, Msglen))
-		goto error;
-	if (!EVP_SignFinal(&ctx, sigbuf, (unsigned int *)&siglen, &pk))
-		goto error;
+		pad_mode = RSA_X931_PADDING;
+	else
+		pad_mode = RSA_PKCS1_PADDING;
 
-	EVP_MD_CTX_cleanup(&ctx);
+	if (!FIPS_rsa_sign(rsa, Msg, Msglen, dgst, pad_mode, Saltlen, NULL,
+				sigbuf, (unsigned int *)&siglen))
+		goto error;
 
 	fputs("S = ", out);
 
 	for (i = 0; i < siglen; i++)
 		fprintf(out, "%02X", sigbuf[i]);
 
-	fputs("\n", out);
+	fputs(RESP_EOL, out);
 
 	ret = 1;
 
 	error:
+
+	if (sigbuf)
+		OPENSSL_free(sigbuf);
 
 	return ret;
 	}

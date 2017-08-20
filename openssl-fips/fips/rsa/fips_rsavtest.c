@@ -1,5 +1,5 @@
 /* fips_rsavtest.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2005.
  */
 /* ====================================================================
@@ -56,6 +56,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -63,7 +65,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
-#include <openssl/x509v3.h>
+#include <openssl/bn.h>
 
 #ifndef OPENSSL_FIPS
 
@@ -75,9 +77,12 @@ int main(int argc, char *argv[])
 
 #else
 
+#include <openssl/rsa.h>
+#include <openssl/fips.h>
+
 #include "fips_utl.h"
 
-static int rsa_vtest(FILE *out, FILE *in, int saltlen);
+int rsa_vtest(FILE *out, FILE *in, int saltlen);
 static int rsa_printver(FILE *out,
 		BIGNUM *n, BIGNUM *e,
 		const EVP_MD *dgst,
@@ -91,6 +96,7 @@ int main(int argc, char **argv)
 #endif
 	{
 	FILE *in = NULL, *out = NULL;
+
 	int ret = 1;
 	int Saltlen = -1;
 
@@ -146,9 +152,6 @@ int main(int argc, char **argv)
 
 	end:
 
-	if (ret)
-		do_print_errors();
-
 	if (in && (in != stdin))
 		fclose(in);
 	if (out && (out != stdout))
@@ -160,7 +163,7 @@ int main(int argc, char **argv)
 
 #define RSA_TEST_MAXLINELEN	10240
 
-static int rsa_vtest(FILE *out, FILE *in, int Saltlen)
+int rsa_vtest(FILE *out, FILE *in, int Saltlen)
 	{
 	char *linebuf, *olinebuf, *p, *q;
 	char *keyword, *value;
@@ -317,11 +320,9 @@ static int rsa_printver(FILE *out,
 		unsigned char *Msg, long Msglen,
 		unsigned char *S, long Slen, int Saltlen)
 	{
-	int ret = 0, r;
+	int ret = 0, r, pad_mode;
 	/* Setup RSA and EVP_PKEY structures */
 	RSA *rsa_pubkey = NULL;
-	EVP_PKEY pk;
-	EVP_MD_CTX ctx;
 	unsigned char *buf = NULL;
 	rsa_pubkey = FIPS_rsa_new();
 	if (!rsa_pubkey)
@@ -330,36 +331,26 @@ static int rsa_printver(FILE *out,
 	rsa_pubkey->e = BN_dup(e);
 	if (!rsa_pubkey->n || !rsa_pubkey->e)
 		goto error;
-	pk.type = EVP_PKEY_RSA;
-	pk.pkey.rsa = rsa_pubkey;
-
-	EVP_MD_CTX_init(&ctx);
 
 	if (Saltlen >= 0)
-		{
-		M_EVP_MD_CTX_set_flags(&ctx,
-			EVP_MD_CTX_FLAG_PAD_PSS | (Saltlen << 16));
-		}
+		pad_mode = RSA_PKCS1_PSS_PADDING;
 	else if (Saltlen == -2)
-		M_EVP_MD_CTX_set_flags(&ctx, EVP_MD_CTX_FLAG_PAD_X931);
-	if (!EVP_VerifyInit_ex(&ctx, dgst, NULL))
-		goto error;
-	if (!EVP_VerifyUpdate(&ctx, Msg, Msglen))
-		goto error;
+		pad_mode = RSA_X931_PADDING;
+	else
+		pad_mode = RSA_PKCS1_PADDING;
 
-	r = EVP_VerifyFinal(&ctx, S, Slen, &pk);
-
-
-	EVP_MD_CTX_cleanup(&ctx);
+	no_err = 1;
+	r = FIPS_rsa_verify(rsa_pubkey, Msg, Msglen, dgst,
+				pad_mode, Saltlen, NULL, S, Slen);
+	no_err = 0;
 
 	if (r < 0)
 		goto error;
-	ERR_clear_error();
 
 	if (r == 0)
-		fputs("Result = F\n", out);
+		fputs("Result = F" RESP_EOL, out);
 	else
-		fputs("Result = P\n", out);
+		fputs("Result = P" RESP_EOL, out);
 
 	ret = 1;
 

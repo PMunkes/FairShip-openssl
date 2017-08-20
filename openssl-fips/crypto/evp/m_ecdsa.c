@@ -113,7 +113,7 @@
 #include "cryptlib.h"
 #include <openssl/evp.h>
 #include <openssl/objects.h>
-#include <openssl/x509.h>
+#include <openssl/sha.h>
 
 #ifndef OPENSSL_NO_SHA
 static int init(EVP_MD_CTX *ctx)
@@ -130,13 +130,13 @@ static const EVP_MD ecdsa_md=
 	NID_ecdsa_with_SHA1,
 	NID_ecdsa_with_SHA1,
 	SHA_DIGEST_LENGTH,
-	0,
+	EVP_MD_FLAG_PKEY_METHOD_SIGNATURE|EVP_MD_FLAG_PKEY_DIGEST|EVP_MD_FLAG_FIPS,
 	init,
 	update,
 	final,
 	NULL,
 	NULL,
-	EVP_PKEY_ECDSA_method,
+	EVP_PKEY_NULL_method,
 	SHA_CBLOCK,
 	sizeof(EVP_MD *)+sizeof(SHA_CTX),
 	};

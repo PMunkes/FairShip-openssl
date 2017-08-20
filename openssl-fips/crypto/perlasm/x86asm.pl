@@ -7,6 +7,9 @@
 # &function_end("foo");
 # &asm_finish
 
+$out=();
+$i386=0;
+
 # AUTOLOAD is this context has quite unpleasant side effect, namely
 # that typos in function calls effectively go to assembler output,
 # but on the pros side we don't have to implement one subroutine per
@@ -14,7 +17,7 @@
 sub ::AUTOLOAD
 { my $opcode = $AUTOLOAD;
 
-    die "more than 2 arguments passed to $opcode" if ($#_>1);
+    die "more than 4 arguments passed to $opcode" if ($#_>3);
 
     $opcode =~ s/.*:://;
     if    ($opcode =~ /^push/) { $stack+=4; }
@@ -22,9 +25,6 @@ sub ::AUTOLOAD
 
     &generic($opcode,@_) or die "undefined subroutine \&$AUTOLOAD";
 }
-
-$out=();
-$i386=0;
 
 sub ::emit
 { my $opcode=shift;
@@ -65,7 +65,109 @@ sub ::rotl	{ &rol(@_);	}
 sub ::rotr	{ &ror(@_);	}
 sub ::exch	{ &xchg(@_);	}
 sub ::halt	{ &hlt;		}
+sub ::movz	{ &movzx(@_);	}
+sub ::pushf	{ &pushfd;	}
+sub ::popf	{ &popfd;	}
 
+# 3 argument instructions
+sub ::movq
+{ my($p1,$p2,$optimize)=@_;
+
+    if ($optimize && $p1=~/^mm[0-7]$/ && $p2=~/^mm[0-7]$/)
+    # movq between mmx registers can sink Intel CPUs
+    {	&::pshufw($p1,$p2,0xe4);		}
+    else
+    {	&::generic("movq",@_);			}
+}
+
+# SSE>2 instructions
+my %regrm = (	"eax"=>0, "ecx"=>1, "edx"=>2, "ebx"=>3,
+		"esp"=>4, "ebp"=>5, "esi"=>6, "edi"=>7	);
+sub ::pextrd
+{ my($dst,$src,$imm)=@_;
+    if ("$dst:$src" =~ /(e[a-dsd][ixp]):xmm([0-7])/)
+    {	&::data_byte(0x66,0x0f,0x3a,0x16,0xc0|($2<<3)|$regrm{$1},$imm);	}
+    else
+    {	&::generic("pextrd",@_);		}
+}
+
+sub ::pinsrd
+{ my($dst,$src,$imm)=@_;
+    if ("$dst:$src" =~ /xmm([0-7]):(e[a-dsd][ixp])/)
+    {	&::data_byte(0x66,0x0f,0x3a,0x22,0xc0|($1<<3)|$regrm{$2},$imm);	}
+    else
+    {	&::generic("pinsrd",@_);		}
+}
+
+sub ::pshufb
+{ my($dst,$src)=@_;
+    if ("$dst:$src" =~ /xmm([0-7]):xmm([0-7])/)
+    {	&data_byte(0x66,0x0f,0x38,0x00,0xc0|($1<<3)|$2);	}
+    else
+    {	&::generic("pshufb",@_);		}
+}
+
+sub ::palignr
+{ my($dst,$src,$imm)=@_;
+    if ("$dst:$src" =~ /xmm([0-7]):xmm([0-7])/)
+    {	&::data_byte(0x66,0x0f,0x3a,0x0f,0xc0|($1<<3)|$2,$imm);	}
+    else
+    {	&::generic("palignr",@_);		}
+}
+
+sub ::pclmulqdq
+{ my($dst,$src,$imm)=@_;
+    if ("$dst:$src" =~ /xmm([0-7]):xmm([0-7])/)
+    {	&::data_byte(0x66,0x0f,0x3a,0x44,0xc0|($1<<3)|$2,$imm);	}
+    else
+    {	&::generic("pclmulqdq",@_);		}
+}
+
+sub ::rdrand
+{ my ($dst)=@_;
+    if ($dst =~ /(e[a-dsd][ixp])/)
+    {	&::data_byte(0x0f,0xc7,0xf0|$regrm{$dst});	}
+    else
+    {	&::generic("rdrand",@_);	}
+}
+
+# label management
+$lbdecor="L";		# local label decoration, set by package
+$label="000";
+
+sub ::islabel		# see is argument is a known label
+{ my $i;
+    foreach $i (values %label) { return $i if ($i eq $_[0]); }
+  $label{$_[0]};	# can be undef
+}
+
+sub ::label		# instantiate a function-scope label
+{   if (!defined($label{$_[0]}))
+    {	$label{$_[0]}="${lbdecor}${label}${_[0]}"; $label++;   }
+  $label{$_[0]};
+}
+
+sub ::LABEL		# instantiate a file-scope label
+{   $label{$_[0]}=$_[1] if (!defined($label{$_[0]}));
+  $label{$_[0]};
+}
+
+sub ::static_label	{ &::LABEL($_[0],$lbdecor.$_[0]); }
+
+sub ::set_label_B	{ push(@out,"@_:\n"); }
+sub ::set_label
+{ my $label=&::label($_[0]);
+    &::align($_[1]) if ($_[1]>1);
+    &::set_label_B($label);
+  $label;
+}
+
+sub ::wipe_labels	# wipes function-scope labels
+{   foreach $i (keys %label)
+    {	delete $label{$i} if ($label{$i} =~ /^\Q${lbdecor}\E[0-9]{3}/);	}
+}
+
+# subroutine management
 sub ::function_begin
 {   &function_begin_B(@_);
     $stack=4;
@@ -81,8 +183,9 @@ sub ::function_end
     &pop("ebx");
     &pop("ebp");
     &ret();
-    $stack=0;
     &function_end_B(@_);
+    $stack=0;
+    &wipe_labels();
 }
 
 sub ::function_end_A
@@ -94,7 +197,15 @@ sub ::function_end_A
     $stack+=16;	# readjust esp as if we didn't pop anything
 }
 
-sub ::asciz {   foreach (@_) { &data_byte(unpack("C*",$_),0); }   }
+sub ::asciz
+{ my @str=unpack("C*",shift);
+    push @str,0;
+    while ($#str>15) {
+	&data_byte(@str[0..15]);
+	foreach (0..15) { shift @str; }
+    }
+    &data_byte(@str) if (@str);
+}
 
 sub ::asm_finish
 {   &file_end();
@@ -107,19 +218,25 @@ sub ::asm_init
     $filename=$fn;
     $i386=$cpu;
 
-    $elf=$cpp=$coff=$aout=$win32=$netware=$mwerks=0;
+    $elf=$cpp=$coff=$aout=$macosx=$win32=$netware=$mwerks=$android=0;
     if    (($type eq "elf"))
-    {	$elf=1;			require "x86unix.pl";	}
+    {	$elf=1;			require "x86gas.pl";	}
     elsif (($type eq "a\.out"))
-    {	$aout=1;		require "x86unix.pl";	}
+    {	$aout=1;		require "x86gas.pl";	}
     elsif (($type eq "coff" or $type eq "gaswin"))
-    {	$coff=1;		require "x86unix.pl";	}
+    {	$coff=1;		require "x86gas.pl";	}
     elsif (($type eq "win32n"))
     {	$win32=1;		require "x86nasm.pl";	}
     elsif (($type eq "nw-nasm"))
     {	$netware=1;		require "x86nasm.pl";	}
-    elsif (($type eq "nw-mwasm"))
-    {	$netware=1; $mwerks=1;	require "x86nasm.pl";	}
+    #elsif (($type eq "nw-mwasm"))
+    #{	$netware=1; $mwerks=1;	require "x86nasm.pl";	}
+    elsif (($type eq "win32"))
+    {	$win32=1;		require "x86masm.pl";	}
+    elsif (($type eq "macosx"))
+    {	$aout=1; $macosx=1;	require "x86gas.pl";	}
+    elsif (($type eq "android"))
+    {	$elf=1; $android=1;	require "x86gas.pl";	}
     else
     {	print STDERR <<"EOF";
 Pick one target type from
@@ -128,7 +245,7 @@ Pick one target type from
 	coff	- GAS/COFF such as Win32 targets
 	win32n	- Windows 95/Windows NT NASM format
 	nw-nasm - NetWare NASM format
-	nw-mwasm- NetWare Metrowerks Assembler
+	macosx	- Mac OS X
 EOF
 	exit(1);
     }

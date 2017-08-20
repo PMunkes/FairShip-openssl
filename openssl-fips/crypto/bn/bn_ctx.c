@@ -60,6 +60,8 @@
 #endif
 #endif
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <assert.h>
 
@@ -161,7 +163,7 @@ static void ctxdbg(BN_CTX *ctx)
 	fprintf(stderr,"(%08x): ", (unsigned int)ctx);
 	while(bnidx < ctx->used)
 		{
-		fprintf(stderr,"%02x ", item->vals[bnidx++ % BN_CTX_POOL_SIZE].dmax);
+		fprintf(stderr,"%03x ", item->vals[bnidx++ % BN_CTX_POOL_SIZE].dmax);
 		if(!(bnidx % BN_CTX_POOL_SIZE))
 			item = item->next;
 		}
@@ -171,8 +173,8 @@ static void ctxdbg(BN_CTX *ctx)
 	while(fpidx < stack->depth)
 		{
 		while(bnidx++ < stack->indexes[fpidx])
-			fprintf(stderr,"   ");
-		fprintf(stderr,"^^ ");
+			fprintf(stderr,"    ");
+		fprintf(stderr,"^^^ ");
 		bnidx++;
 		fpidx++;
 		}

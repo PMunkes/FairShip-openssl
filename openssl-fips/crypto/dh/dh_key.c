@@ -56,13 +56,16 @@
  * [including the GNU Public Licence.]
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include "cryptlib.h"
 #include <openssl/bn.h>
 #include <openssl/rand.h>
 #include <openssl/dh.h>
-
-#ifndef OPENSSL_FIPS
+#ifdef OPENSSL_FIPS
+#include <openssl/fips.h>
+#endif
 
 static int generate_key(DH *dh);
 static int compute_key(unsigned char *key, const BIGNUM *pub_key, DH *dh);
@@ -83,6 +86,21 @@ int DH_compute_key(unsigned char *key, const BIGNUM *pub_key, DH *dh)
 	return dh->meth->compute_key(key, pub_key, dh);
 	}
 
+int DH_compute_key_padded(unsigned char *key, const BIGNUM *pub_key, DH *dh)
+	{
+	int rv, pad;
+	rv = dh->meth->compute_key(key, pub_key, dh);
+	if (rv <= 0)
+		return rv;
+	pad = BN_num_bytes(dh->p) - rv;
+	if (pad > 0)
+		{
+		memmove(key + pad, key, rv);
+		memset(key, 0, pad);
+		}
+	return rv + pad;
+	}
+
 static DH_METHOD dh_ossl = {
 "OpenSSL DH Method",
 generate_key,
@@ -90,7 +108,7 @@ compute_key,
 dh_bn_mod_exp,
 dh_init,
 dh_finish,
-0,
+DH_FLAG_FIPS_METHOD,
 NULL,
 NULL
 };
@@ -108,6 +126,14 @@ static int generate_key(DH *dh)
 	BN_CTX *ctx;
 	BN_MONT_CTX *mont=NULL;
 	BIGNUM *pub_key=NULL,*priv_key=NULL;
+
+#ifdef OPENSSL_FIPS
+	if (FIPS_module_mode() && (BN_num_bits(dh->p) < OPENSSL_DH_FIPS_MIN_MODULUS_BITS))
+		{
+		DHerr(DH_F_GENERATE_KEY, DH_R_KEY_SIZE_TOO_SMALL);
+		return 0;
+		}
+#endif
 
 	ctx = BN_CTX_new();
 	if (ctx == NULL) goto err;
@@ -140,8 +166,21 @@ static int generate_key(DH *dh)
 
 	if (generate_new_key)
 		{
-		l = dh->length ? dh->length : BN_num_bits(dh->p)-1; /* secret exponent length */
-		if (!BN_rand(priv_key, l, 0, 0)) goto err;
+		if (dh->q)
+			{
+			do
+				{
+				if (!BN_rand_range(priv_key, dh->q))
+					goto err;
+				}
+			while (BN_is_zero(priv_key) || BN_is_one(priv_key));
+			}
+		else
+			{
+			/* secret exponent length */
+			l = dh->length ? dh->length : BN_num_bits(dh->p)-1;
+			if (!BN_rand(priv_key, l, 0, 0)) goto err;
+			}
 		}
 
 	{
@@ -186,6 +225,14 @@ static int compute_key(unsigned char *key, const BIGNUM *pub_key, DH *dh)
 		DHerr(DH_F_COMPUTE_KEY,DH_R_MODULUS_TOO_LARGE);
 		goto err;
 		}
+
+#ifdef OPENSSL_FIPS
+	if (FIPS_module_mode() && (BN_num_bits(dh->p) < OPENSSL_DH_FIPS_MIN_MODULUS_BITS))
+		{
+		DHerr(DH_F_COMPUTE_KEY, DH_R_KEY_SIZE_TOO_SMALL);
+		goto err;
+		}
+#endif
 
 	ctx = BN_CTX_new();
 	if (ctx == NULL) goto err;
@@ -253,6 +300,13 @@ static int dh_bn_mod_exp(const DH *dh, BIGNUM *r,
 
 static int dh_init(DH *dh)
 	{
+#ifdef OPENSSL_FIPS
+	if(FIPS_selftest_failed())
+		{
+		FIPSerr(FIPS_F_DH_INIT,FIPS_R_FIPS_SELFTEST_FAILED);
+		return 0;
+		}
+#endif
 	dh->flags |= DH_FLAG_CACHE_MONT_P;
 	return(1);
 	}
@@ -263,5 +317,3 @@ static int dh_finish(DH *dh)
 		BN_MONT_CTX_free(dh->method_mont_p);
 	return(1);
 	}
-
-#endif

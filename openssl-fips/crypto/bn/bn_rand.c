@@ -109,6 +109,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <time.h>
 #include "cryptlib.h"
@@ -227,7 +229,7 @@ int     BN_bntest_rand(BIGNUM *rnd, int bits, int top, int bottom)
 
 
 /* random number r:  0 <= r < range */
-static int bn_rand_range(int pseudo, BIGNUM *r, BIGNUM *range)
+static int bn_rand_range(int pseudo, BIGNUM *r, const BIGNUM *range)
 	{
 	int (*bn_rand)(BIGNUM *, int, int, int) = pseudo ? BN_pseudo_rand : BN_rand;
 	int n;
@@ -245,7 +247,15 @@ static int bn_rand_range(int pseudo, BIGNUM *r, BIGNUM *range)
 
 	if (n == 1)
 		BN_zero(r);
+#ifdef OPENSSL_FIPS
+	/* FIPS 186-3 is picky about how random numbers for keys etc are
+	 * generated. So we just use the second case which is equivalent to
+	 * "Generation by Testing Candidates" mentioned in B.1.2 et al.
+	 */
+	else if (!FIPS_module_mode() && !BN_is_bit_set(range, n - 2) && !BN_is_bit_set(range, n - 3))
+#else
 	else if (!BN_is_bit_set(range, n - 2) && !BN_is_bit_set(range, n - 3))
+#endif
 		{
 		/* range = 100..._2,
 		 * so  3*range (= 11..._2)  is exactly one bit longer than  range */
@@ -294,12 +304,12 @@ static int bn_rand_range(int pseudo, BIGNUM *r, BIGNUM *range)
 	}
 
 
-int	BN_rand_range(BIGNUM *r, BIGNUM *range)
+int	BN_rand_range(BIGNUM *r, const BIGNUM *range)
 	{
 	return bn_rand_range(0, r, range);
 	}
 
-int	BN_pseudo_rand_range(BIGNUM *r, BIGNUM *range)
+int	BN_pseudo_rand_range(BIGNUM *r, const BIGNUM *range)
 	{
 	return bn_rand_range(1, r, range);
 	}

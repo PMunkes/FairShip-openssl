@@ -47,7 +47,7 @@
  *
  */
 /*---------------------------------------------
-  NIST DES tdes_Modes of Operation Validation System
+  NIST DES Modes of Operation Validation System
   Test Program
 
   Based on the AES Validation Suite, which was:
@@ -58,16 +58,19 @@
   U.S.A.
   ----------------------------------------------*/
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
-
+#include <openssl/crypto.h>
 #include <openssl/des.h>
 #include <openssl/evp.h>
-#include <openssl/fips.h>
+#include <openssl/bn.h>
+
 #include <openssl/err.h>
 #include "e_os.h"
 
@@ -82,6 +85,7 @@ int main(int argc, char *argv[])
 #else
 
 #include "fips_utl.h"
+#include <openssl/fips.h>
 
 #define DES_BLOCK_SIZE 8
 
@@ -98,39 +102,36 @@ static int DESTest(EVP_CIPHER_CTX *ctx,
     if (akeysz != 192)
 	{
 	printf("Invalid key size: %d\n", akeysz);
-	return(0);
+	return 0;
 	}
 
-    if (strcasecmp(amode, "CBC") == 0)
+    if (fips_strcasecmp(amode, "CBC") == 0)
 	cipher = EVP_des_ede3_cbc();
-    else if (strcasecmp(amode, "ECB") == 0)
+    else if (fips_strcasecmp(amode, "ECB") == 0)
 	cipher = EVP_des_ede3_ecb();
-    else if (strcasecmp(amode, "CFB64") == 0)
+    else if (fips_strcasecmp(amode, "CFB64") == 0)
 	cipher = EVP_des_ede3_cfb64();
-    else if (strncasecmp(amode, "OFB", 3) == 0)
+    else if (fips_strncasecmp(amode, "OFB", 3) == 0)
 	cipher = EVP_des_ede3_ofb();
-#if 0
-    else if(!strcasecmp(amode,"CFB1"))
-	{
-	ctx->cbits = 1;
-	ctx->cmode = EVP_CIPH_CFB_MODE;
-	}
-#endif
-    else if(!strcasecmp(amode,"CFB8"))
+    else if(!fips_strcasecmp(amode,"CFB8"))
 	cipher = EVP_des_ede3_cfb8();
+    else if(!fips_strcasecmp(amode,"CFB1"))
+	cipher = EVP_des_ede3_cfb1();
     else
 	{
 	printf("Unknown mode: %s\n", amode);
-	return(1);
+	return 0;
 	}
 
-    if (EVP_CipherInit_ex(ctx, cipher, NULL, aKey, iVec, dir) <= 0)
+    if (FIPS_cipherinit(ctx, cipher, aKey, iVec, dir) <= 0)
 	return 0;
-    EVP_Cipher(ctx, out, in, len);
+    if(!fips_strcasecmp(amode,"CFB1"))
+	M_EVP_CIPHER_CTX_set_flags(ctx, EVP_CIPH_FLAG_LENGTH_BITS);
+    FIPS_cipher(ctx, out, in, len);
 
     return 1;
     }
-
+#if 0
 static void DebugValue(char *tag, unsigned char *val, int len)
     {
     char obuf[2048];
@@ -138,7 +139,7 @@ static void DebugValue(char *tag, unsigned char *val, int len)
     olen = bin2hex(val, len, obuf);
     printf("%s = %.*s\n", tag, olen, obuf);
     }
-
+#endif
 static void shiftin(unsigned char *dst,unsigned char *src,int nbits)
     {
     int n;
@@ -174,9 +175,8 @@ static int do_tmct(char *amode,
     if (imode == 6)
 	{ 
 	printf("Unrecognized mode: %s\n", amode);
-	return(0);
+	return 0;
 	}
-
     for(i=0 ; i < 400 ; ++i)
 	{
 	int j;
@@ -184,9 +184,9 @@ static int do_tmct(char *amode,
 	int kp=akeysz/64;
 	unsigned char old_iv[8];
 	EVP_CIPHER_CTX ctx;
-	EVP_CIPHER_CTX_init(&ctx);
+	FIPS_cipher_ctx_init(&ctx);
 
-	fprintf(rfp,"\nCOUNT = %d\n",i);
+	fprintf(rfp,RESP_EOL "COUNT = %d" RESP_EOL,i);
 	if(kp == 1)
 	    OutputValue("KEY",akey,8,rfp,0);
 	else
@@ -199,11 +199,11 @@ static int do_tmct(char *amode,
 	if(imode != TECB)
 	    OutputValue("IV",ivec,8,rfp,0);
 	OutputValue(tdes_t_tag[dir^1],text,len,rfp,imode == TCFB1);
-
+#if 0
 	/* compensate for endianness */
 	if(imode == TCFB1)
 	    text[0]<<=7;
-
+#endif
 	memcpy(text0,text,8);
 
 	for(j=0 ; j < 10000 ; ++j)
@@ -219,7 +219,7 @@ static int do_tmct(char *amode,
 	    else
 		{
 		memcpy(old_iv,ctx.iv,8);
-		EVP_Cipher(&ctx,text,text,len);
+		FIPS_cipher(&ctx,text,text,len);
 		}
 	    if(j == 9999)
 		{
@@ -230,8 +230,8 @@ static int do_tmct(char *amode,
 	    /* accumulate material for the next key */
 	    shiftin(nk,text,Sizes[imode]);
 	    /*	    DebugValue("nk",nk,24);*/
-	    if((dir && (imode == TCFB1 || imode == TCFB8 || imode == TCFB64
-			|| imode == TCBC)) || imode == TOFB)
+	    if((dir && (imode == TCFB1 || imode == TCFB8
+			|| imode == TCFB64 || imode == TCBC)) || imode == TOFB)
 		memcpy(text,old_iv,8);
 
 	    if(!dir && (imode == TCFB1 || imode == TCFB8 || imode == TCFB64))
@@ -263,9 +263,8 @@ static int do_tmct(char *amode,
 	if(imode == TOFB)
 	    for(n=0 ; n < 8 ; ++n)
 		text[n]=text0[n]^old_iv[n];
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	FIPS_cipher_ctx_cleanup(&ctx);
 	}
-
     return 1;
     }
     
@@ -274,18 +273,18 @@ static int tproc_file(char *rqfile, char *rspfile)
     char afn[256], rfn[256];
     FILE *afp = NULL, *rfp = NULL;
     char ibuf[2048], tbuf[2048];
-    int ilen, len, ret = 0;
+    int len;
     char amode[8] = "";
     char atest[100] = "";
     int akeysz=0;
     unsigned char iVec[20], aKey[40];
-    int dir = -1, err = 0, step = 0;
+    int dir = -1, err = 0, step = 0, echo = 1;
     unsigned char plaintext[2048];
     unsigned char ciphertext[2048];
     char *rp;
     EVP_CIPHER_CTX ctx;
     int numkeys=1;
-    EVP_CIPHER_CTX_init(&ctx);
+    FIPS_cipher_ctx_init(&ctx);
 
     if (!rqfile || !(*rqfile))
 	{
@@ -325,7 +324,6 @@ static int tproc_file(char *rqfile, char *rspfile)
     while (!err && (fgets(ibuf, sizeof(ibuf), afp)) != NULL)
 	{
 	tidy_line(tbuf, ibuf);
-	ilen = strlen(ibuf);
 	/*	printf("step=%d ibuf=%s",step,ibuf);*/
 	if(step == 3 && !strcmp(amode,"ECB"))
 	    {
@@ -339,12 +337,12 @@ static int tproc_file(char *rqfile, char *rspfile)
 		{ /* end of preamble */
 		if (*amode == '\0')
 		    {
-		    printf("Missing tdes_Mode\n");
+		    printf("Missing Mode\n");
 		    err = 1;
 		    }
 		else
 		    {
-		    fputs(ibuf, rfp);
+		    copy_line(ibuf, rfp);
 		    ++ step;
 		    }
 		}
@@ -358,13 +356,12 @@ static int tproc_file(char *rqfile, char *rspfile)
 		char *xp, *pp = ibuf+2;
 		int n;
 		if(*amode)
-		    { /* insert current time & date */
-		    time_t rtim = time(0);
-		    fprintf(rfp, "# %s", ctime(&rtim));
+		    {
+		    copy_line(ibuf, rfp);
 		    }
 		else
 		    {
-		    fputs(ibuf, rfp);
+		    copy_line(ibuf, rfp);
 		    if(!strncmp(pp,"INVERSE ",8) || !strncmp(pp,"DES ",4)
 		       || !strncmp(pp,"TDES ",5)
 		       || !strncmp(pp,"PERMUTATION ",12)
@@ -385,9 +382,11 @@ static int tproc_file(char *rqfile, char *rspfile)
 			n = strlen(xp+1)-1;
 			strncpy(amode, xp+1, n);
 			amode[n] = '\0';
+			if (!strcmp(atest, "Monte"))
+				echo = 0;
 			/* amode[3] = '\0'; */
 			if (VERBOSE)
-				printf("Test=%s, tdes_Mode=%s\n",atest,amode);
+				printf("Test=%s, Mode=%s\n",atest,amode);
 			}
 		    }
 		}
@@ -398,11 +397,11 @@ static int tproc_file(char *rqfile, char *rspfile)
 		break;
 	    if (ibuf[0] == '[')
 		{
-		fputs(ibuf, rfp);
+		copy_line(ibuf, rfp);
 		++step;
-		if (strncasecmp(ibuf, "[ENCRYPT]", 9) == 0)
+		if (fips_strncasecmp(ibuf, "[ENCRYPT]", 9) == 0)
 		    dir = 1;
-		else if (strncasecmp(ibuf, "[DECRYPT]", 9) == 0)
+		else if (fips_strncasecmp(ibuf, "[DECRYPT]", 9) == 0)
 		    dir = 0;
 		else
 		    {
@@ -423,27 +422,27 @@ static int tproc_file(char *rqfile, char *rspfile)
 	case 2: /* KEY = xxxx */
 	    if(*ibuf == '\n')
 		{
-	        fputs(ibuf, rfp);
+	        copy_line(ibuf, rfp);
 		break;
                 }
-	    if(!strncasecmp(ibuf,"COUNT = ",8))
+	    if(!fips_strncasecmp(ibuf,"COUNT = ",8))
 		{
-	        fputs(ibuf, rfp);
+	        copy_line(ibuf, rfp);
 		break;
                 }
-	    if(!strncasecmp(ibuf,"COUNT=",6))
+	    if(!fips_strncasecmp(ibuf,"COUNT=",6))
 		{
-	        fputs(ibuf, rfp);
+	        copy_line(ibuf, rfp);
 		break;
                 }
-	    if(!strncasecmp(ibuf,"NumKeys = ",10))
+	    if(!fips_strncasecmp(ibuf,"NumKeys = ",10))
 		{
 		numkeys=atoi(ibuf+10);
 		break;
 		}
-	  
-	    fputs(ibuf, rfp);
-	    if(!strncasecmp(ibuf,"KEY = ",6))
+	    if (echo) 
+	    	copy_line(ibuf, rfp);
+	    if(!fips_strncasecmp(ibuf,"KEY = ",6))
 		{
 		akeysz=64;
 		len = hex2bin((char*)ibuf+6, aKey);
@@ -456,7 +455,7 @@ static int tproc_file(char *rqfile, char *rspfile)
 		PrintValue("KEY", aKey, len);
 		++step;
 		}
-	    else if(!strncasecmp(ibuf,"KEYs = ",7))
+	    else if(!fips_strncasecmp(ibuf,"KEYs = ",7))
 		{
 		akeysz=64*3;
 		len=hex2bin(ibuf+7,aKey);
@@ -472,7 +471,7 @@ static int tproc_file(char *rqfile, char *rspfile)
 		PrintValue("KEYs",aKey,len);
 		++step;
 		}
-	    else if(!strncasecmp(ibuf,"KEY",3))
+	    else if(!fips_strncasecmp(ibuf,"KEY",3))
 		{
 		int n=ibuf[3]-'1';
 
@@ -497,8 +496,9 @@ static int tproc_file(char *rqfile, char *rspfile)
 	    break;
 
 	case 3: /* IV = xxxx */
-	    fputs(ibuf, rfp);
-	    if (strncasecmp(ibuf, "IV = ", 5) != 0)
+	    if (echo)
+	    	copy_line(ibuf, rfp);
+	    if (fips_strncasecmp(ibuf, "IV = ", 5) != 0)
 		{
 		printf("Missing IV\n");
 		err = 1;
@@ -518,8 +518,9 @@ static int tproc_file(char *rqfile, char *rspfile)
 	    break;
 
 	case 4: /* PLAINTEXT = xxxx */
-	    fputs(ibuf, rfp);
-	    if (strncasecmp(ibuf, "PLAINTEXT = ", 12) != 0)
+	    if (echo)
+	    	copy_line(ibuf, rfp);
+	    if (fips_strncasecmp(ibuf, "PLAINTEXT = ", 12) != 0)
 		{
 		printf("Missing PLAINTEXT\n");
 		err = 1;
@@ -537,7 +538,7 @@ static int tproc_file(char *rqfile, char *rspfile)
 		    err =1;
 		    break;
 		    }
-		if (len >= sizeof(plaintext))
+		if (len >= (int)sizeof(plaintext))
 		    {
 		    printf("Buffer overflow\n");
 		    }
@@ -545,13 +546,13 @@ static int tproc_file(char *rqfile, char *rspfile)
 		if (strcmp(atest, "Monte") == 0)  /* Monte Carlo Test */
 		    {
 		    if (!do_tmct(amode,akeysz,numkeys,aKey,iVec,
-		    			dir,plaintext,len,rfp))
-		    	return -1;
+					dir,plaintext,len,rfp))
+			return -1;
 		    }
 		else
 		    {
 		    assert(dir == 1);
-		    ret = DESTest(&ctx, amode, akeysz, aKey, iVec, 
+		    DESTest(&ctx, amode, akeysz, aKey, iVec, 
 				  dir,  /* 0 = decrypt, 1 = encrypt */
 				  ciphertext, plaintext, len);
 		    OutputValue("CIPHERTEXT",ciphertext,len,rfp,
@@ -562,8 +563,9 @@ static int tproc_file(char *rqfile, char *rspfile)
 	    break;
 
 	case 5: /* CIPHERTEXT = xxxx */
-	    fputs(ibuf, rfp);
-	    if (strncasecmp(ibuf, "CIPHERTEXT = ", 13) != 0)
+	    if (echo)
+	    	copy_line(ibuf, rfp);
+	    if (fips_strncasecmp(ibuf, "CIPHERTEXT = ", 13) != 0)
 		{
 		printf("Missing KEY\n");
 		err = 1;
@@ -584,14 +586,13 @@ static int tproc_file(char *rqfile, char *rspfile)
 		PrintValue("CIPHERTEXT", ciphertext, len);
 		if (strcmp(atest, "Monte") == 0)  /* Monte Carlo Test */
 		    {
-		    if (!do_tmct(amode, akeysz, numkeys, aKey, iVec, 
-			   dir, ciphertext, len, rfp))
-		    	return -1;
+		    do_tmct(amode, akeysz, numkeys, aKey, iVec, 
+			   dir, ciphertext, len, rfp);
 		    }
 		else
 		    {
 		    assert(dir == 0);
-		    ret = DESTest(&ctx, amode, akeysz, aKey, iVec, 
+		    DESTest(&ctx, amode, akeysz, aKey, iVec, 
 				  dir,  /* 0 = decrypt, 1 = encrypt */
 				  plaintext, ciphertext, len);
 		    OutputValue("PLAINTEXT",(unsigned char *)plaintext,len,rfp,
@@ -609,7 +610,7 @@ static int tproc_file(char *rqfile, char *rspfile)
 		}
 	    else if (strcmp(atest, "MCT") != 0)
 		{ /* MCT already added terminating nl */
-		fputs(ibuf, rfp);
+		copy_line(ibuf, rfp);
 		}
 	    step = 1;
 	    break;
@@ -619,6 +620,7 @@ static int tproc_file(char *rqfile, char *rspfile)
 	fclose(rfp);
     if (afp)
 	fclose(afp);
+    FIPS_cipher_ctx_cleanup(&ctx);
     return err;
     }
 
@@ -640,19 +642,17 @@ int main(int argc, char **argv)
     char *rqlist = "req.txt", *rspfile = NULL;
     FILE *fp = NULL;
     char fn[250] = "", rfn[256] = "";
-    int f_opt = 0, d_opt = 1;
+    int d_opt = 1;
 
     fips_algtest_init();
-
     if (argc > 1)
 	{
-	if (strcasecmp(argv[1], "-d") == 0)
+	if (fips_strcasecmp(argv[1], "-d") == 0)
 	    {
 	    d_opt = 1;
 	    }
-	else if (strcasecmp(argv[1], "-f") == 0)
+	else if (fips_strcasecmp(argv[1], "-f") == 0)
 	    {
-	    f_opt = 1;
 	    d_opt = 0;
 	    }
 	else
@@ -688,7 +688,7 @@ int main(int argc, char **argv)
 	    if (tproc_file(rfn, rspfile))
 		{
 		printf(">>> Processing failed for: %s <<<\n", rfn);
-		return(1);
+		return -1;
 		}
 	    }
 	fclose(fp);

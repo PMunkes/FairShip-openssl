@@ -23,7 +23,6 @@ CFLAGS= $(INCLUDES) $(CFLAG)
 
 GENERAL=Makefile
 TEST= fips_shatest.c
-TESTDATA= SHAmix.req SHAmix.fax
 APPS=
 EXE= fips_standalone_sha1$(EXE_EXT)
 
@@ -60,7 +59,6 @@ files:
 links:
 	@$(PERL) $(TOP)/util/mklink.pl $(TOP)/include/openssl $(EXHEADER)
 	@$(PERL) $(TOP)/util/mklink.pl $(TOP)/test $(TEST)
-	cp $(TESTDATA) $(TOP)/test
 	@$(PERL) $(TOP)/util/mklink.pl $(TOP)/apps $(APPS)
 
 install:
@@ -131,21 +129,19 @@ fips_sha1_selftest.o: ../../include/openssl/ossl_typ.h
 fips_sha1_selftest.o: ../../include/openssl/safestack.h
 fips_sha1_selftest.o: ../../include/openssl/sha.h ../../include/openssl/stack.h
 fips_sha1_selftest.o: ../../include/openssl/symhacks.h fips_sha1_selftest.c
-fips_shatest.o: ../../include/openssl/asn1.h ../../include/openssl/bio.h
-fips_shatest.o: ../../include/openssl/buffer.h ../../include/openssl/conf.h
+fips_shatest.o: ../../include/openssl/aes.h ../../include/openssl/asn1.h
+fips_shatest.o: ../../include/openssl/bio.h ../../include/openssl/bn.h
 fips_shatest.o: ../../include/openssl/crypto.h ../../include/openssl/e_os2.h
-fips_shatest.o: ../../include/openssl/ec.h ../../include/openssl/ecdh.h
-fips_shatest.o: ../../include/openssl/ecdsa.h ../../include/openssl/err.h
+fips_shatest.o: ../../include/openssl/ec.h ../../include/openssl/err.h
 fips_shatest.o: ../../include/openssl/evp.h ../../include/openssl/fips.h
+fips_shatest.o: ../../include/openssl/fips_rand.h ../../include/openssl/hmac.h
 fips_shatest.o: ../../include/openssl/lhash.h ../../include/openssl/obj_mac.h
 fips_shatest.o: ../../include/openssl/objects.h
 fips_shatest.o: ../../include/openssl/opensslconf.h
 fips_shatest.o: ../../include/openssl/opensslv.h
-fips_shatest.o: ../../include/openssl/ossl_typ.h ../../include/openssl/pkcs7.h
-fips_shatest.o: ../../include/openssl/safestack.h ../../include/openssl/sha.h
-fips_shatest.o: ../../include/openssl/stack.h ../../include/openssl/symhacks.h
-fips_shatest.o: ../../include/openssl/x509.h ../../include/openssl/x509_vfy.h
-fips_shatest.o: ../../include/openssl/x509v3.h ../fips_utl.h fips_shatest.c
+fips_shatest.o: ../../include/openssl/ossl_typ.h
+fips_shatest.o: ../../include/openssl/safestack.h ../../include/openssl/stack.h
+fips_shatest.o: ../../include/openssl/symhacks.h ../fips_utl.h fips_shatest.c
 fips_standalone_sha1.o: ../../include/openssl/asn1.h
 fips_standalone_sha1.o: ../../include/openssl/bio.h
 fips_standalone_sha1.o: ../../include/openssl/crypto.h

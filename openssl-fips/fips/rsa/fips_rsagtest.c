@@ -1,5 +1,5 @@
 /* fips_rsagtest.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2005.
  */
 /* ====================================================================
@@ -56,6 +56,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -63,7 +65,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
-#include <openssl/x509v3.h>
+#include <openssl/bn.h>
 
 #ifndef OPENSSL_FIPS
 
@@ -75,9 +77,11 @@ int main(int argc, char *argv[])
 
 #else
 
+#include <openssl/rsa.h>
+#include <openssl/fips.h>
 #include "fips_utl.h"
 
-static int rsa_gtest(FILE *out, FILE *in);
+int rsa_test(FILE *out, FILE *in);
 static int rsa_printkey1(FILE *out, RSA *rsa,
 		BIGNUM *Xp1, BIGNUM *Xp2, BIGNUM *Xp,
 		BIGNUM *e);
@@ -118,7 +122,7 @@ int main(int argc, char **argv)
 		goto end;
 		}
 
-	if (!rsa_gtest(out, in))
+	if (!rsa_test(out, in))
 		{
 		fprintf(stderr, "FATAL RSAGTEST file processing error\n");
 		goto end;
@@ -127,9 +131,6 @@ int main(int argc, char **argv)
 		ret = 0;
 
 	end:
-
-	if (ret)
-		do_print_errors();
 
 	if (in && (in != stdin))
 		fclose(in);
@@ -142,7 +143,7 @@ int main(int argc, char **argv)
 
 #define RSA_TEST_MAXLINELEN	10240
 
-static int rsa_gtest(FILE *out, FILE *in)
+int rsa_test(FILE *out, FILE *in)
 	{
 	char *linebuf, *olinebuf, *p, *q;
 	char *keyword, *value;

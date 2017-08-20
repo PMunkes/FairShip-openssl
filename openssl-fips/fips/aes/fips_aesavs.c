@@ -57,16 +57,18 @@
   U.S.A.
   ----------------------------------------------*/
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
 #include <ctype.h>
-
 #include <openssl/aes.h>
 #include <openssl/evp.h>
-#include <openssl/fips.h>
+#include <openssl/bn.h>
+
 #include <openssl/err.h>
 #include "e_os.h"
 
@@ -80,6 +82,7 @@ int main(int argc, char *argv[])
 
 #else
 
+#include <openssl/fips.h>
 #include "fips_utl.h"
 
 #define AES_BLOCK_SIZE 16
@@ -96,7 +99,7 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
     {
     const EVP_CIPHER *cipher = NULL;
 
-    if (strcasecmp(amode, "CBC") == 0)
+    if (fips_strcasecmp(amode, "CBC") == 0)
 	{
 	switch (akeysz)
 		{
@@ -114,7 +117,7 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
 		}
 
 	}
-    else if (strcasecmp(amode, "ECB") == 0)
+    else if (fips_strcasecmp(amode, "ECB") == 0)
 	{
 	switch (akeysz)
 		{
@@ -131,7 +134,7 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
 		break;
 		}
 	}
-    else if (strcasecmp(amode, "CFB128") == 0)
+    else if (fips_strcasecmp(amode, "CFB128") == 0)
 	{
 	switch (akeysz)
 		{
@@ -149,7 +152,7 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
 		}
 
 	}
-    else if (strncasecmp(amode, "OFB", 3) == 0)
+    else if (fips_strncasecmp(amode, "OFB", 3) == 0)
 	{
 	switch (akeysz)
 		{
@@ -166,7 +169,7 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
 		break;
 		}
 	}
-    else if(!strcasecmp(amode,"CFB1"))
+    else if(!fips_strcasecmp(amode,"CFB1"))
 	{
 	switch (akeysz)
 		{
@@ -183,7 +186,7 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
 		break;
 		}
 	}
-    else if(!strcasecmp(amode,"CFB8"))
+    else if(!fips_strcasecmp(amode,"CFB8"))
 	{
 	switch (akeysz)
 		{
@@ -210,12 +213,14 @@ static int AESTest(EVP_CIPHER_CTX *ctx,
 	printf("Invalid key size: %d\n", akeysz);
 	return 0; 
 	}
-    if (EVP_CipherInit_ex(ctx, cipher, NULL, aKey, iVec, dir) <= 0)
+    if (FIPS_cipherinit(ctx, cipher, aKey, iVec, dir) <= 0)
 	return 0;
+    if(!fips_strcasecmp(amode,"CFB1"))
+	M_EVP_CIPHER_CTX_set_flags(ctx, EVP_CIPH_FLAG_LENGTH_BITS);
     if (dir)
-		EVP_Cipher(ctx, ciphertext, plaintext, len);
+		FIPS_cipher(ctx, ciphertext, plaintext, len);
 	else
-		EVP_Cipher(ctx, plaintext, ciphertext, len);
+		FIPS_cipher(ctx, plaintext, ciphertext, len);
     return 1;
     }
 
@@ -249,7 +254,7 @@ static int do_mct(char *amode,
     int i, j, n, n1, n2;
     int imode = 0, nkeysz = akeysz/8;
     EVP_CIPHER_CTX ctx;
-    EVP_CIPHER_CTX_init(&ctx);
+    FIPS_cipher_ctx_init(&ctx);
 
     if (len > 32)
 	{
@@ -278,7 +283,7 @@ static int do_mct(char *amode,
 	/* printf("Iteration %d\n", i); */
 	if (i > 0)
 	    {
-	    fprintf(rfp,"COUNT = %d\n",i);
+	    fprintf(rfp,"COUNT = %d" RESP_EOL ,i);
 	    OutputValue("KEY",key[i],nkeysz,rfp,0);
 	    if (imode != ECB)  /* ECB */
 		OutputValue("IV",iv[i],AES_BLOCK_SIZE,rfp,0);
@@ -305,12 +310,12 @@ static int do_mct(char *amode,
 		    {
 		    if (dir == XENCRYPT)
 			{
-			EVP_Cipher(&ctx, ctext[j], ptext[j], len);
+			FIPS_cipher(&ctx, ctext[j], ptext[j], len);
 			memcpy(ptext[j+1], ctext[j], len);
 			}
 		    else
 			{
-			EVP_Cipher(&ctx, ptext[j], ctext[j], len);
+			FIPS_cipher(&ctx, ptext[j], ctext[j], len);
 			memcpy(ctext[j+1], ptext[j], len);
 			}
 		    }
@@ -333,12 +338,12 @@ static int do_mct(char *amode,
 		    {
 		    if (dir == XENCRYPT)
 			{
-			EVP_Cipher(&ctx, ctext[j], ptext[j], len);
+			FIPS_cipher(&ctx, ctext[j], ptext[j], len);
 			memcpy(ptext[j+1], ctext[j-1], len);
 			}
 		    else
 			{
-			EVP_Cipher(&ctx, ptext[j], ctext[j], len);
+			FIPS_cipher(&ctx, ptext[j], ctext[j], len);
 			memcpy(ctext[j+1], ptext[j-1], len);
 			}
 		    }
@@ -354,9 +359,9 @@ static int do_mct(char *amode,
 		else
 		    {
 		    if (dir == XENCRYPT)
-			EVP_Cipher(&ctx, ctext[j], ptext[j], len);
+			FIPS_cipher(&ctx, ctext[j], ptext[j], len);
 		    else
-			EVP_Cipher(&ctx, ptext[j], ctext[j], len);
+			FIPS_cipher(&ctx, ptext[j], ctext[j], len);
 		    }
 		if (dir == XENCRYPT)
 		    {
@@ -377,18 +382,20 @@ static int do_mct(char *amode,
 	    case CFB1:
 		if(j == 0)
 		    {
+#if 0
 		    /* compensate for wrong endianness of input file */
 		    if(i == 0)
 			ptext[0][0]<<=7;
+#endif
 		    ret = AESTest(&ctx,amode,akeysz,key[i],iv[i],dir,
 				ptext[j], ctext[j], len);
 		    }
 		else
 		    {
 		    if (dir == XENCRYPT)
-			EVP_Cipher(&ctx, ctext[j], ptext[j], len);
+			FIPS_cipher(&ctx, ctext[j], ptext[j], len);
 		    else
-			EVP_Cipher(&ctx, ptext[j], ctext[j], len);
+			FIPS_cipher(&ctx, ptext[j], ctext[j], len);
 
 		    }
 		if(dir == XENCRYPT)
@@ -412,7 +419,7 @@ static int do_mct(char *amode,
 	/* Output Ciphertext | Plaintext */
 	OutputValue(t_tag[dir],dir ? ctext[j] : ptext[j],len,rfp,
 		    imode == CFB1);
-	fprintf(rfp, "\n");  /* add separator */
+	fprintf(rfp, RESP_EOL);  /* add separator */
 
 	/* Compute next KEY */
 	if (dir == XENCRYPT)
@@ -528,8 +535,7 @@ static int do_mct(char *amode,
 		}
 	    }
 	}
-    
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    FIPS_cipher_ctx_cleanup(&ctx);
     return ret;
     }
 
@@ -548,7 +554,7 @@ static int proc_file(char *rqfile, char *rspfile)
     FILE *afp = NULL, *rfp = NULL;
     char ibuf[2048];
     char tbuf[2048];
-    int ilen, len, ret = 0;
+    int len;
     char algo[8] = "";
     char amode[8] = "";
     char atest[8] = "";
@@ -559,7 +565,7 @@ static int proc_file(char *rqfile, char *rspfile)
     unsigned char ciphertext[2048];
     char *rp;
     EVP_CIPHER_CTX ctx;
-    EVP_CIPHER_CTX_init(&ctx);
+    FIPS_cipher_ctx_init(&ctx);
 
     if (!rqfile || !(*rqfile))
 	{
@@ -599,7 +605,6 @@ static int proc_file(char *rqfile, char *rspfile)
     while (!err && (fgets(ibuf, sizeof(ibuf), afp)) != NULL)
 	{
 	tidy_line(tbuf, ibuf);
-	ilen = strlen(ibuf);
 	/*      printf("step=%d ibuf=%s",step,ibuf); */
 	switch (step)
 	    {
@@ -616,7 +621,7 @@ static int proc_file(char *rqfile, char *rspfile)
 		    }
 		else
 		    {
-		    fputs(ibuf, rfp);
+		    copy_line(ibuf, rfp);
 		    ++ step;
 		    }
 		}
@@ -630,13 +635,12 @@ static int proc_file(char *rqfile, char *rspfile)
 		char *xp, *pp = ibuf+2;
 		int n;
 		if (akeysz)
-		    { /* insert current time & date */
-		    time_t rtim = time(0);
-		    fprintf(rfp, "# %s", ctime(&rtim));
+		    {
+		    copy_line(ibuf, rfp);
 		    }
 		else
 		    {
-		    fputs(ibuf, rfp);
+		    copy_line(ibuf, rfp);
 		    if (strncmp(pp, "AESVS ", 6) == 0)
 			{
 			strcpy(algo, "AES");
@@ -655,7 +659,7 @@ static int proc_file(char *rqfile, char *rspfile)
 			if (VERBOSE)
 				printf("Test = %s, Mode = %s\n", atest, amode);
 			}
-		    else if (strncasecmp(pp, "Key Length : ", 13) == 0)
+		    else if (fips_strncasecmp(pp, "Key Length : ", 13) == 0)
 			{
 			akeysz = atoi(pp+13);
 			if (VERBOSE)
@@ -668,11 +672,11 @@ static int proc_file(char *rqfile, char *rspfile)
 	case 1:  /* [ENCRYPT] | [DECRYPT] */
 	    if (ibuf[0] == '[')
 		{
-		fputs(ibuf, rfp);
+		copy_line(ibuf, rfp);
 		++step;
-		if (strncasecmp(ibuf, "[ENCRYPT]", 9) == 0)
+		if (fips_strncasecmp(ibuf, "[ENCRYPT]", 9) == 0)
 		    dir = 1;
-		else if (strncasecmp(ibuf, "[DECRYPT]", 9) == 0)
+		else if (fips_strncasecmp(ibuf, "[DECRYPT]", 9) == 0)
 		    dir = 0;
 		else
 		    {
@@ -691,13 +695,13 @@ static int proc_file(char *rqfile, char *rspfile)
 		step = 2;
 
 	case 2: /* KEY = xxxx */
-	    fputs(ibuf, rfp);
+	    copy_line(ibuf, rfp);
 	    if(*ibuf == '\n')
 		break;
-	    if(!strncasecmp(ibuf,"COUNT = ",8))
+	    if(!fips_strncasecmp(ibuf,"COUNT = ",8))
 		break;
 
-	    if (strncasecmp(ibuf, "KEY = ", 6) != 0)
+	    if (fips_strncasecmp(ibuf, "KEY = ", 6) != 0)
 		{
 		printf("Missing KEY\n");
 		err = 1;
@@ -723,8 +727,8 @@ static int proc_file(char *rqfile, char *rspfile)
 	    break;
 
 	case 3: /* IV = xxxx */
-	    fputs(ibuf, rfp);
-	    if (strncasecmp(ibuf, "IV = ", 5) != 0)
+	    copy_line(ibuf, rfp);
+	    if (fips_strncasecmp(ibuf, "IV = ", 5) != 0)
 		{
 		printf("Missing IV\n");
 		err = 1;
@@ -744,8 +748,8 @@ static int proc_file(char *rqfile, char *rspfile)
 	    break;
 
 	case 4: /* PLAINTEXT = xxxx */
-	    fputs(ibuf, rfp);
-	    if (strncasecmp(ibuf, "PLAINTEXT = ", 12) != 0)
+	    copy_line(ibuf, rfp);
+	    if (fips_strncasecmp(ibuf, "PLAINTEXT = ", 12) != 0)
 		{
 		printf("Missing PLAINTEXT\n");
 		err = 1;
@@ -763,7 +767,7 @@ static int proc_file(char *rqfile, char *rspfile)
 		    err =1;
 		    break;
 		    }
-		if (len >= sizeof(plaintext))
+		if (len >= (int)sizeof(plaintext))
 		    {
 		    printf("Buffer overflow\n");
 		    }
@@ -773,11 +777,11 @@ static int proc_file(char *rqfile, char *rspfile)
 		    if(do_mct(amode, akeysz, aKey, iVec, 
 			      dir, (unsigned char*)plaintext, len, 
 			      rfp) < 0)
-			return(1);
+			err = 1;
 		    }
 		else
 		    {
-		    ret = AESTest(&ctx, amode, akeysz, aKey, iVec, 
+		    AESTest(&ctx, amode, akeysz, aKey, iVec, 
 				  dir,  /* 0 = decrypt, 1 = encrypt */
 				  plaintext, ciphertext, len);
 		    OutputValue("CIPHERTEXT",ciphertext,len,rfp,
@@ -788,8 +792,8 @@ static int proc_file(char *rqfile, char *rspfile)
 	    break;
 
 	case 5: /* CIPHERTEXT = xxxx */
-	    fputs(ibuf, rfp);
-	    if (strncasecmp(ibuf, "CIPHERTEXT = ", 13) != 0)
+	    copy_line(ibuf, rfp);
+	    if (fips_strncasecmp(ibuf, "CIPHERTEXT = ", 13) != 0)
 		{
 		printf("Missing KEY\n");
 		err = 1;
@@ -815,7 +819,7 @@ static int proc_file(char *rqfile, char *rspfile)
 		    }
 		else
 		    {
-		    ret = AESTest(&ctx, amode, akeysz, aKey, iVec, 
+		    AESTest(&ctx, amode, akeysz, aKey, iVec, 
 				  dir,  /* 0 = decrypt, 1 = encrypt */
 				  plaintext, ciphertext, len);
 		    OutputValue("PLAINTEXT",(unsigned char *)plaintext,len,rfp,
@@ -833,7 +837,7 @@ static int proc_file(char *rqfile, char *rspfile)
 		}
 	    else if (strcmp(atest, "MCT") != 0)
 		{ /* MCT already added terminating nl */
-		fputs(ibuf, rfp);
+		copy_line(ibuf, rfp);
 		}
 	    step = 1;
 	    break;
@@ -843,6 +847,7 @@ static int proc_file(char *rqfile, char *rspfile)
 	fclose(rfp);
     if (afp)
 	fclose(afp);
+    FIPS_cipher_ctx_cleanup(&ctx);
     return err;
     }
 
@@ -864,19 +869,17 @@ int main(int argc, char **argv)
     char *rqlist = "req.txt", *rspfile = NULL;
     FILE *fp = NULL;
     char fn[250] = "", rfn[256] = "";
-    int f_opt = 0, d_opt = 1;
-
+    int d_opt = 1;
     fips_algtest_init();
 
     if (argc > 1)
 	{
-	if (strcasecmp(argv[1], "-d") == 0)
+	if (fips_strcasecmp(argv[1], "-d") == 0)
 	    {
 	    d_opt = 1;
 	    }
-	else if (strcasecmp(argv[1], "-f") == 0)
+	else if (fips_strcasecmp(argv[1], "-f") == 0)
 	    {
-	    f_opt = 1;
 	    d_opt = 0;
 	    }
 	else
@@ -913,7 +916,7 @@ int main(int argc, char **argv)
 	    if (proc_file(rfn, rspfile))
 		{
 		printf(">>> Processing failed for: %s <<<\n", rfn);
-		return(1);
+		return 1;
 		}
 	    }
 	fclose(fp);

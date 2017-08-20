@@ -1,5 +1,5 @@
 /* fips_dsa_lib.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2007.
  */
 /* ====================================================================
@@ -56,8 +56,12 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <string.h>
 #include <openssl/dsa.h>
+#include <openssl/bn.h>
+#include <openssl/fips.h>
 
 /* Minimal FIPS versions of FIPS_dsa_new() and FIPS_dsa_free: to
  * reduce external dependencies. 
@@ -90,5 +94,28 @@ void FIPS_dsa_free(DSA *r)
 	if (r->kinv != NULL) BN_clear_free(r->kinv);
 	if (r->r != NULL) BN_clear_free(r->r);
 	OPENSSL_free(r);
+	}
+
+DSA_SIG *FIPS_dsa_sig_new(void)
+	{
+	DSA_SIG *sig;
+	sig = OPENSSL_malloc(sizeof(DSA_SIG));
+	if (!sig)
+		return NULL;
+	sig->r = NULL;
+	sig->s = NULL;
+	return sig;
+	}
+
+void FIPS_dsa_sig_free(DSA_SIG *sig)
+	{
+	if (sig)
+		{
+		if (sig->r)
+			BN_free(sig->r);
+		if (sig->s)
+			BN_free(sig->s);
+		OPENSSL_free(sig);
+		}
 	}
 

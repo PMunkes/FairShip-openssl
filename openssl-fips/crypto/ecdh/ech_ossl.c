@@ -67,6 +67,7 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
 
 #include <string.h>
 #include <limits.h>
@@ -90,7 +91,7 @@ static ECDH_METHOD openssl_ecdh_meth = {
 	NULL, /* init     */
 	NULL, /* finish   */
 #endif
-	0,    /* flags    */
+	ECDH_FLAG_FIPS_METHOD,    /* flags    */
 	NULL  /* app_data */
 };
 
@@ -118,6 +119,14 @@ static int ecdh_compute_key(void *out, size_t outlen, const EC_POINT *pub_key,
 	size_t buflen, len;
 	unsigned char *buf=NULL;
 
+#ifdef OPENSSL_FIPS
+	if(FIPS_selftest_failed())
+		{
+		FIPSerr(FIPS_F_ECDH_COMPUTE_KEY,FIPS_R_FIPS_SELFTEST_FAILED);
+		return -1;
+		}
+#endif
+
 	if (outlen > INT_MAX)
 		{
 		ECDHerr(ECDH_F_ECDH_COMPUTE_KEY,ERR_R_MALLOC_FAILURE); /* sort of, anyway */
@@ -137,6 +146,18 @@ static int ecdh_compute_key(void *out, size_t outlen, const EC_POINT *pub_key,
 		}
 
 	group = EC_KEY_get0_group(ecdh);
+
+	if (EC_KEY_get_flags(ecdh) & EC_FLAG_COFACTOR_ECDH)
+		{
+		if (!EC_GROUP_get_cofactor(group, x, ctx) ||
+			!BN_mul(x, x, priv_key, ctx))
+			{
+			ECDHerr(ECDH_F_ECDH_COMPUTE_KEY, ERR_R_MALLOC_FAILURE);
+			goto err;
+			}
+		priv_key = x;
+		}
+
 	if ((tmp=EC_POINT_new(group)) == NULL)
 		{
 		ECDHerr(ECDH_F_ECDH_COMPUTE_KEY,ERR_R_MALLOC_FAILURE);
@@ -157,6 +178,7 @@ static int ecdh_compute_key(void *out, size_t outlen, const EC_POINT *pub_key,
 			goto err;
 			}
 		}
+#ifndef OPENSSL_NO_EC2M
 	else
 		{
 		if (!EC_POINT_get_affine_coordinates_GF2m(group, tmp, x, y, ctx)) 
@@ -165,6 +187,7 @@ static int ecdh_compute_key(void *out, size_t outlen, const EC_POINT *pub_key,
 			goto err;
 			}
 		}
+#endif
 
 	buflen = (EC_GROUP_get_degree(group) + 7)/8;
 	len = BN_num_bytes(x);
@@ -211,3 +234,15 @@ err:
 	if (buf) OPENSSL_free(buf);
 	return(ret);
 	}
+
+#ifdef OPENSSL_FIPSCANISTER
+/* FIPS stanadlone version of ecdh_check: just return FIPS method */
+ECDH_DATA *fips_ecdh_check(EC_KEY *key)
+	{
+	static ECDH_DATA rv = {
+		0,0,0,
+		&openssl_ecdh_meth
+		};
+	return &rv;
+	}
+#endif

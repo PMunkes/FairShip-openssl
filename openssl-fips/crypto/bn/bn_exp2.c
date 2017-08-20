@@ -109,6 +109,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include "cryptlib.h"
 #include "bn_lcl.h"
@@ -301,7 +303,8 @@ int BN_mod_exp2_mont(BIGNUM *rr, const BIGNUM *a1, const BIGNUM *p1,
 			r_is_one = 0;
 			}
 		}
-	BN_from_montgomery(rr,r,mont,ctx);
+	if (!BN_from_montgomery(rr,r,mont,ctx))
+		goto err;
 	ret=1;
 err:
 	if ((in_mont == NULL) && (mont != NULL)) BN_MONT_CTX_free(mont);

@@ -47,10 +47,12 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 /*
  * This is a FIPS approved AES PRNG based on ANSI X9.31 A.2.4.
  */
-
+#include <openssl/crypto.h>
 #include "e_os.h"
 
 /* If we don't define _XOPEN_SOURCE_EXTENDED, struct timeval won't
@@ -64,7 +66,7 @@
 #include <openssl/aes.h>
 #include <openssl/err.h>
 #include <openssl/fips_rand.h>
-#if !(defined(OPENSSL_SYS_WIN32) || defined(OPENSSL_SYS_VXWORKS))
+#if !(defined(OPENSSL_SYS_WIN32) || defined(OPENSSL_SYS_VXWORKS) || defined(OPENSSL_SYSNAME_DSPBIOS))
 # include <sys/time.h>
 #endif
 #if defined(OPENSSL_SYS_VXWORKS)
@@ -112,12 +114,12 @@ static FIPS_PRNG_CTX sctx;
 
 static int fips_prng_fail = 0;
 
-void FIPS_rng_stick(void)
+void FIPS_x931_stick(int onoff)
 	{
-	fips_prng_fail = 1;
+	fips_prng_fail = onoff;
 	}
 
-void fips_rand_prng_reset(FIPS_PRNG_CTX *ctx)
+static void fips_rand_prng_reset(FIPS_PRNG_CTX *ctx)
 	{
 	ctx->seeded = 0;
 	ctx->keyed = 0;
@@ -132,9 +134,13 @@ void fips_rand_prng_reset(FIPS_PRNG_CTX *ctx)
 	
 
 static int fips_set_prng_key(FIPS_PRNG_CTX *ctx,
-			const unsigned char *key, FIPS_RAND_SIZE_T keylen)
+			const unsigned char *key, unsigned int keylen)
 	{
-	FIPS_selftest_check();
+	if (FIPS_selftest_failed())
+		{
+		FIPSerr(FIPS_F_FIPS_SET_PRNG_KEY, FIPS_R_SELFTEST_FAILED);
+		return 0;
+		}
 	if (keylen != 16 && keylen != 24 && keylen != 32)
 		{
 		/* error: invalid key size */
@@ -154,9 +160,9 @@ static int fips_set_prng_key(FIPS_PRNG_CTX *ctx,
 	}
 
 static int fips_set_prng_seed(FIPS_PRNG_CTX *ctx,
-			const unsigned char *seed, FIPS_RAND_SIZE_T seedlen)
+			const unsigned char *seed, unsigned int seedlen)
 	{
-	int i;
+	unsigned int i;
 	if (!ctx->keyed)
 		return 0;
 	/* In test mode seed is just supplied data */
@@ -195,7 +201,7 @@ static int fips_set_prng_seed(FIPS_PRNG_CTX *ctx,
 	return 1;
 	}
 
-int fips_set_test_mode(FIPS_PRNG_CTX *ctx)
+static int fips_set_test_mode(FIPS_PRNG_CTX *ctx)
 	{
 	if (ctx->keyed)
 		{
@@ -206,39 +212,48 @@ int fips_set_test_mode(FIPS_PRNG_CTX *ctx)
 	return 1;
 	}
 
-int FIPS_rand_test_mode(void)
+int FIPS_x931_test_mode(void)
 	{
 	return fips_set_test_mode(&sctx);
 	}
 
-int FIPS_rand_set_dt(unsigned char *dt)
+int FIPS_x931_set_dt(unsigned char *dt)
 	{
 	if (!sctx.test_mode)
 		{
-		RANDerr(RAND_F_FIPS_RAND_SET_DT,RAND_R_NOT_IN_TEST_MODE);
+		RANDerr(RAND_F_FIPS_X931_SET_DT,RAND_R_NOT_IN_TEST_MODE);
 		return 0;
 		}
 	memcpy(sctx.DT, dt, AES_BLOCK_LENGTH);
 	return 1;
 	}
 
-static void fips_get_dt(FIPS_PRNG_CTX *ctx)
-    {
+void FIPS_get_timevec(unsigned char *buf, unsigned long *pctr)
+	{
 #ifdef OPENSSL_SYS_WIN32
 	FILETIME ft;
+#ifdef _WIN32_WCE
+	SYSTEMTIME t;
+#endif
 #elif defined(OPENSSL_SYS_VXWORKS)
         struct timespec ts;
+#elif defined(OPENSSL_SYSNAME_DSPBIOS)
+	unsigned long long TSC, OPENSSL_rdtsc();
 #else
 	struct timeval tv;
 #endif
-	unsigned char *buf = ctx->DT;
 
 #ifndef GETPID_IS_MEANINGLESS
 	unsigned long pid;
 #endif
 
 #ifdef OPENSSL_SYS_WIN32
+#ifdef _WIN32_WCE
+	GetSystemTime(&t);
+	SystemTimeToFileTime(&t, &ft);
+#else
 	GetSystemTimeAsFileTime(&ft);
+#endif
 	buf[0] = (unsigned char) (ft.dwHighDateTime & 0xff);
 	buf[1] = (unsigned char) ((ft.dwHighDateTime >> 8) & 0xff);
 	buf[2] = (unsigned char) ((ft.dwHighDateTime >> 16) & 0xff);
@@ -257,6 +272,16 @@ static void fips_get_dt(FIPS_PRNG_CTX *ctx)
 	buf[5] = (unsigned char) ((ts.tv_nsec >> 8) & 0xff);
 	buf[6] = (unsigned char) ((ts.tv_nsec >> 16) & 0xff);
 	buf[7] = (unsigned char) ((ts.tv_nsec >> 24) & 0xff);
+#elif defined(OPENSSL_SYSNAME_DSPBIOS)
+	TSC = OPENSSL_rdtsc();
+	buf[0] = (unsigned char) (TSC & 0xff);
+	buf[1] = (unsigned char) ((TSC >> 8) & 0xff);
+	buf[2] = (unsigned char) ((TSC >> 16) & 0xff);
+	buf[3] = (unsigned char) ((TSC >> 24) & 0xff);
+	buf[4] = (unsigned char) ((TSC >> 32) & 0xff);
+	buf[5] = (unsigned char) ((TSC >> 40) & 0xff);
+	buf[6] = (unsigned char) ((TSC >> 48) & 0xff);
+	buf[7] = (unsigned char) ((TSC >> 56) & 0xff);
 #else
 	gettimeofday(&tv,NULL);
 	buf[0] = (unsigned char) (tv.tv_sec & 0xff);
@@ -268,12 +293,12 @@ static void fips_get_dt(FIPS_PRNG_CTX *ctx)
 	buf[6] = (unsigned char) ((tv.tv_usec >> 16) & 0xff);
 	buf[7] = (unsigned char) ((tv.tv_usec >> 24) & 0xff);
 #endif
-	buf[8] = (unsigned char) (ctx->counter & 0xff);
-	buf[9] = (unsigned char) ((ctx->counter >> 8) & 0xff);
-	buf[10] = (unsigned char) ((ctx->counter >> 16) & 0xff);
-	buf[11] = (unsigned char) ((ctx->counter >> 24) & 0xff);
+	buf[8] = (unsigned char) (*pctr & 0xff);
+	buf[9] = (unsigned char) ((*pctr >> 8) & 0xff);
+	buf[10] = (unsigned char) ((*pctr >> 16) & 0xff);
+	buf[11] = (unsigned char) ((*pctr >> 24) & 0xff);
 
-	ctx->counter++;
+	(*pctr)++;
 
 
 #ifndef GETPID_IS_MEANINGLESS
@@ -286,7 +311,7 @@ static void fips_get_dt(FIPS_PRNG_CTX *ctx)
     }
 
 static int fips_rand(FIPS_PRNG_CTX *ctx,
-			unsigned char *out, FIPS_RAND_SIZE_T outlen)
+			unsigned char *out, unsigned int outlen)
 	{
 	unsigned char R[AES_BLOCK_LENGTH], I[AES_BLOCK_LENGTH];
 	unsigned char tmp[AES_BLOCK_LENGTH];
@@ -309,7 +334,7 @@ static int fips_rand(FIPS_PRNG_CTX *ctx,
 	for (;;)
 		{
 		if (!ctx->test_mode)
-			fips_get_dt(ctx);
+			FIPS_get_timevec(ctx->DT, &ctx->counter);
 		AES_encrypt(ctx->DT, I, &ctx->ks);
 		for (i = 0; i < AES_BLOCK_LENGTH; i++)
 			tmp[i] = I[i] ^ ctx->V[i];
@@ -352,7 +377,7 @@ static int fips_rand(FIPS_PRNG_CTX *ctx,
 	}
 
 
-int FIPS_rand_set_key(const unsigned char *key, FIPS_RAND_SIZE_T keylen)
+int FIPS_x931_set_key(const unsigned char *key, int keylen)
 	{
 	int ret;
 	CRYPTO_w_lock(CRYPTO_LOCK_RAND);
@@ -361,7 +386,7 @@ int FIPS_rand_set_key(const unsigned char *key, FIPS_RAND_SIZE_T keylen)
 	return ret;
 	}
 
-int FIPS_rand_seed(const void *seed, FIPS_RAND_SIZE_T seedlen)
+int FIPS_x931_seed(const void *seed, int seedlen)
 	{
 	int ret;
 	CRYPTO_w_lock(CRYPTO_LOCK_RAND);
@@ -371,7 +396,7 @@ int FIPS_rand_seed(const void *seed, FIPS_RAND_SIZE_T seedlen)
 	}
 
 
-int FIPS_rand_bytes(unsigned char *out, FIPS_RAND_SIZE_T count)
+int FIPS_x931_bytes(unsigned char *out, int count)
 	{
 	int ret;
 	CRYPTO_w_lock(CRYPTO_LOCK_RAND);
@@ -380,7 +405,7 @@ int FIPS_rand_bytes(unsigned char *out, FIPS_RAND_SIZE_T count)
 	return ret;
 	}
 
-int FIPS_rand_status(void)
+int FIPS_x931_status(void)
 	{
 	int ret;
 	CRYPTO_r_lock(CRYPTO_LOCK_RAND);
@@ -389,37 +414,39 @@ int FIPS_rand_status(void)
 	return ret;
 	}
 
-void FIPS_rand_reset(void)
+void FIPS_x931_reset(void)
 	{
 	CRYPTO_w_lock(CRYPTO_LOCK_RAND);
 	fips_rand_prng_reset(&sctx);
 	CRYPTO_w_unlock(CRYPTO_LOCK_RAND);
 	}
 
-static void fips_do_rand_seed(const void *seed, FIPS_RAND_SIZE_T seedlen)
+static int fips_do_rand_seed(const void *seed, int seedlen)
 	{
-	FIPS_rand_seed(seed, seedlen);
+	FIPS_x931_seed(seed, seedlen);
+	return 1;
 	}
 
-static void fips_do_rand_add(const void *seed, FIPS_RAND_SIZE_T seedlen,
+static int fips_do_rand_add(const void *seed, int seedlen,
 					double add_entropy)
 	{
-	FIPS_rand_seed(seed, seedlen);
+	FIPS_x931_seed(seed, seedlen);
+	return 1;
 	}
 
-static const RAND_METHOD rand_fips_meth=
+static const RAND_METHOD rand_x931_meth=
     {
     fips_do_rand_seed,
-    FIPS_rand_bytes,
-    FIPS_rand_reset,
+    FIPS_x931_bytes,
+    FIPS_x931_reset,
     fips_do_rand_add,
-    FIPS_rand_bytes,
-    FIPS_rand_status
+    FIPS_x931_bytes,
+    FIPS_x931_status
     };
 
-const RAND_METHOD *FIPS_rand_method(void)
+const RAND_METHOD *FIPS_x931_method(void)
 {
-  return &rand_fips_meth;
+  return &rand_x931_meth;
 }
 
 #endif

@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(__unix) || defined(__unix__) || defined(__APPLE__)
+#if defined(__unix) || defined(__unix__) || defined(__vxworks) || defined(__ANDROID__) || defined(__APPLE__)
 #include <unistd.h>
 #endif
 
@@ -53,6 +53,12 @@
   int lib$initialize();
   globaldef int (*lib_init_ref)() = lib$initialize;
 # pragma __standard
+#elif defined(_TMS320C6X)
+# if defined(__TI_EABI__)
+  asm("\t.sect \".init_array\"\n\t.align 4\n\t.field FINGERPRINT_premain,32");
+# else
+  asm("\t.sect \".pinit\"\n\t.align 4\n\t.field _FINGERPRINT_premain,32");
+# endif
 #elif 0
   The rest has to be taken care of through command line:
 
@@ -68,6 +74,11 @@
 #define HMAC_SHA1_SIG "?have to make sure this string is unique"
 #endif
 
+#if defined(_MSC_VER)
+# pragma const_seg("fipsro")
+# pragma const_seg()
+  __declspec(allocate("fipsro"))
+#endif
 static const unsigned char FINGERPRINT_ascii_value[41] = HMAC_SHA1_SIG;
 
 #define atox(c) ((c)>='a'?((c)-'a'+10):((c)>='A'?(c)-'A'+10:(c)-'0'))
@@ -129,6 +140,9 @@ void FINGERPRINT_premain(void)
 	}
 #endif
     } while(0);
+#if defined(__powerpc__) || defined(__ppc__) || defined(_ARCH_PPC)
+    fips_openssl_cpuid_setup();
+#endif
 }
 
 #else

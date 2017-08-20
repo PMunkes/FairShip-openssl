@@ -56,9 +56,12 @@
  * [including the GNU Public Licence.]
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include "cryptlib.h"
 #include "bn_lcl.h"
+
 
 void BN_RECP_CTX_init(BN_RECP_CTX *recp)
 	{

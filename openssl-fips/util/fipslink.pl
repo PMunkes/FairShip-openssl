@@ -27,6 +27,19 @@ if (exists $ENV{"PREMAIN_DSO_EXE"})
 	$fips_premain_dso = "";
 	}
 
+my $fips_sig = $ENV{"FIPS_SIG"};
+if (defined $fips_sig)
+	{
+	if ($fips_premain_dso ne "")
+		{
+		$fips_premain_dso = "$fips_sig -dso";
+		}
+	else
+		{
+		$fips_premain_dso = "$fips_sig -exe";
+		}
+	}
+
 check_hash($sha1_exe, "fips_premain.c");
 check_hash($sha1_exe, "fipscanister.lib");
 
@@ -43,7 +56,12 @@ die "First stage Link failure" if $? != 0;
 
 
 print "$fips_premain_dso $fips_target\n";
-$fips_hash=`$fips_premain_dso $fips_target`;
+system("$fips_premain_dso $fips_target >$fips_target.sha1");
+die "Get hash failure" if $? != 0;
+open my $sha1_res, '<', $fips_target.".sha1" or die "Get hash failure";
+$fips_hash=<$sha1_res>;
+close $sha1_res;
+unlink $fips_target.".sha1";
 chomp $fips_hash;
 die "Get hash failure" if $? != 0;
 
@@ -51,7 +69,6 @@ die "Get hash failure" if $? != 0;
 print "$fips_cc -DHMAC_SHA1_SIG=\\\"$fips_hash\\\" $fips_cc_args $fips_libdir/fips_premain.c\n";
 system "$fips_cc -DHMAC_SHA1_SIG=\\\"$fips_hash\\\" $fips_cc_args $fips_libdir/fips_premain.c";
 die "Second stage Compile failure" if $? != 0;
-
 
 print "$fips_link @ARGV\n";
 system "$fips_link @ARGV";

@@ -1,5 +1,5 @@
 /* fips_dh_lib.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2007.
  */
 /* ====================================================================
@@ -56,8 +56,12 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <string.h>
-#include <openssl/dsa.h>
+#include <openssl/bn.h>
+#include <openssl/dh.h>
+#include <openssl/fips.h>
 
 /* Minimal FIPS versions of FIPS_dh_new() and FIPS_dh_free(): to
  * reduce external dependencies. 

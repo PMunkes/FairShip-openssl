@@ -1,5 +1,5 @@
 /* fips_shatest.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2005.
  */
 /* ====================================================================
@@ -56,13 +56,15 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
-#include <openssl/x509v3.h>
+#include <openssl/bn.h>
 
 #ifndef OPENSSL_FIPS
 
@@ -73,6 +75,8 @@ int main(int argc, char *argv[])
 }
 
 #else
+
+#include <openssl/fips.h>
 
 #include "fips_utl.h"
 
@@ -91,7 +95,6 @@ int main(int argc, char **argv)
 	FILE *in = NULL, *out = NULL;
 
 	int ret = 1;
-
 	fips_algtest_init();
 
 	if (argc == 1)
@@ -125,9 +128,6 @@ int main(int argc, char **argv)
 		ret = 0;
 
 	end:
-
-	if (ret)
-		do_print_errors();
 
 	if (in && (in != stdin))
 		fclose(in);
@@ -301,7 +301,7 @@ static int print_dgst(const EVP_MD *emd, FILE *out,
 	{
 	int i, mdlen;
 	unsigned char md[EVP_MAX_MD_SIZE];
-	if (!EVP_Digest(Msg, Msglen, md, (unsigned int *)&mdlen, emd, NULL))
+	if (!FIPS_digest(Msg, Msglen, md, (unsigned int *)&mdlen, emd))
 		{
 		fputs("Error calculating HASH\n", stderr);
 		return 0;
@@ -309,7 +309,7 @@ static int print_dgst(const EVP_MD *emd, FILE *out,
 	fputs("MD = ", out);
 	for (i = 0; i < mdlen; i++)
 		fprintf(out, "%02x", md[i]);
-	fputs("\n", out);
+	fputs(RESP_EOL, out);
 	return 1;
 	}
 
@@ -322,7 +322,7 @@ static int print_monte(const EVP_MD *md, FILE *out,
 	unsigned char *m1, *m2, *m3, *p;
 	unsigned int mlen, m1len, m2len, m3len;
 
-	EVP_MD_CTX_init(&ctx);
+	FIPS_md_ctx_init(&ctx);
 
 	if (SeedLen > EVP_MAX_MD_SIZE)
 		mlen = SeedLen;
@@ -341,29 +341,29 @@ static int print_monte(const EVP_MD *md, FILE *out,
 	memcpy(m2, Seed, SeedLen);
 	memcpy(m3, Seed, SeedLen);
 
-	fputs("\n", out);
+	fputs(RESP_EOL, out);
 
 	for (j = 0; j < 100; j++)
 		{
 		for (i = 0; i < 1000; i++)
 			{
-			EVP_DigestInit_ex(&ctx, md, NULL);
-			EVP_DigestUpdate(&ctx, m1, m1len);
-			EVP_DigestUpdate(&ctx, m2, m2len);
-			EVP_DigestUpdate(&ctx, m3, m3len);
+			FIPS_digestinit(&ctx, md);
+			FIPS_digestupdate(&ctx, m1, m1len);
+			FIPS_digestupdate(&ctx, m2, m2len);
+			FIPS_digestupdate(&ctx, m3, m3len);
 			p = m1;
 			m1 = m2;
 			m1len = m2len;
 			m2 = m3;
 			m2len = m3len;
 			m3 = p;
-			EVP_DigestFinal_ex(&ctx, m3, &m3len);
+			FIPS_digestfinal(&ctx, m3, &m3len);
 			}
-		fprintf(out, "COUNT = %d\n", j);
+		fprintf(out, "COUNT = %d" RESP_EOL, j);
 		fputs("MD = ", out);
 		for (k = 0; k < m3len; k++)
 			fprintf(out, "%02x", m3[k]);
-		fputs("\n\n", out);
+		fputs(RESP_EOL RESP_EOL, out);
 		memcpy(m1, m3, m3len);
 		memcpy(m2, m3, m3len);
 		m1len = m2len = m3len;
@@ -379,7 +379,7 @@ static int print_monte(const EVP_MD *md, FILE *out,
 	if (m3)
 		OPENSSL_free(m3);
 
-	EVP_MD_CTX_cleanup(&ctx);
+	FIPS_md_ctx_cleanup(&ctx);
 
 	return ret;
 	}

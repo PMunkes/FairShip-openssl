@@ -1,6 +1,6 @@
 #!/bin/sh -e
 #
-# Copyright (c) 2005-2007 The OpenSSL Project.
+# Copyright (c) 2005-2011 The OpenSSL Project.
 #
 # Depending on output file name, the script either embeds fingerprint
 # into libcrypto.so or static application. "Static" refers to static
@@ -88,7 +88,14 @@ case `basename "${TARGET}"` in
 lib*|*.dll)	# must be linking a shared lib...
 	# Shared lib creation can be taking place in the source
 	# directory only, but fipscanister.o can reside elsewhere...
-	FINGERTYPE="${THERE}/fips/fips_standalone_sha1"
+
+	if [ -x "${THERE}/fips/fips_standalone_sha1" ]; then
+		FINGERTYPE="${THERE}/fips/fips_standalone_sha1"
+		PREMAIN_DSO="${THERE}/fips/fips_premain_dso"
+	elif [ -x "${THERE}/bin/fips_standalone_sha1" ]; then
+		FINGERTYPE="${THERE}/bin/fips_standalone_sha1"
+		PREMAIN_DSO="./fips_premain_dso"
+	fi
 
 	# verify fipspremain.c against its detached signature...
 	${FINGERTYPE} "${PREMAIN_C}" | sed "s/(.*\//(/" | \
@@ -99,13 +106,17 @@ lib*|*.dll)	# must be linking a shared lib...
 		diff -w "${CANISTER_O}.sha1" - || \
 	{ echo "${CANISTER_O} fingerprint mismatch"; exit 1; }
 
+	[ -z "${FIPSLD_LIBCRYPTO}" -a -f "${THERE}/libcrypto.a" ] && \
+		FIPSLD_LIBCRYPTO="${THERE}/libcrypto.a"
+		
+
 	# Temporarily remove fipscanister.o from libcrypto.a!
 	# We are required to use the standalone copy...
-	if [ -f "${THERE}/libcrypto.a" ]; then
-	    if ar d "${THERE}/libcrypto.a" fipscanister.o; then
-		(ranlib "${THERE}/libcrypto.a") 2>/dev/null || :
-		trap	'ar r "${THERE}/libcrypto.a" "${CANISTER_O}";
-			 (ranlib "${THERE}/libcrypto.a") 2>/dev/null || :;
+	if [ -n  "${FIPSLD_LIBCRYPTO}" ]; then
+	    if ar d "${FIPSLD_LIBCRYPTO}" fipscanister.o; then
+		(ranlib "${FIPSLD_LIBCRYPTO}") 2>/dev/null || :
+		trap	'ar r "${FIPSLD_LIBCRYPTO}" "${CANISTER_O}";
+			 (ranlib "${FIPSLD_LIBCRYPTO}") 2>/dev/null || :;
 			 sleep 1;
 			 touch -c "${TARGET}"' 0
 	    fi
@@ -116,12 +127,15 @@ lib*|*.dll)	# must be linking a shared lib...
 		"${PREMAIN_C}" \
 		${_WL_PREMAIN} "$@"
 
-	# generate signature...
-	if [ -z "${FIPS_SIG}" ]; then
-		SIG=`"${THERE}/fips/fips_premain_dso" "${TARGET}"`
-	else
-		SIG=`"${FIPS_SIG}" -dso "${TARGET}"`
+	if [ "x${FIPS_SIG}" != "x" ]; then
+		# embed signature
+		"${FIPS_SIG}" "${TARGET}"
+		[ $? -ne 42 ] && exit $?
 	fi
+
+	# generate signature...
+	SIG=`"${PREMAIN_DSO}" "${TARGET}"`
+
 	/bin/rm -f "${TARGET}"
 	if [ -z "${SIG}" ]; then
 	   echo "unable to collect signature"; exit 1
@@ -138,6 +152,8 @@ lib*|*.dll)	# must be linking a shared lib...
 	# directory or off the installed binary target destination.
 	if [ -x "${THERE}/fips/fips_standalone_sha1" ]; then
 		FINGERTYPE="${THERE}/fips/fips_standalone_sha1"
+	elif [ -x "${THERE}/bin/fips_standalone_sha1" ]; then
+		FINGERTYPE="${THERE}/bin/fips_standalone_sha1"
 	else	# Installed tree is expected to contain
 		# lib/fipscanister.o, lib/fipscanister.o.sha1 and
 		# lib/fips_premain.c [not to mention bin/openssl].
@@ -159,18 +175,18 @@ lib*|*.dll)	# must be linking a shared lib...
 		"${PREMAIN_C}" \
 		${_WL_PREMAIN} "$@"
 
-	# generate signature...
-	if [ -z "${FIPS_SIG}" ]; then
-		SIG=`"${TARGET}"`
-	else
+	if [ "x${FIPS_SIG}" != "x" ]; then
 		# embed signature
-		"${FIPS_SIG}" -exe "${TARGET}"
+		"${FIPS_SIG}" "${TARGET}"
 		[ $? -ne 42 ] && exit $?
 	fi
 
+	# generate signature...
+	SIG=`"${TARGET}"`
+
 	/bin/rm -f "${TARGET}"
 	if [ -z "${SIG}" ]; then
-	   	echo "unable to collect signature"; exit 1
+	   echo "unable to collect signature"; exit 1
 	fi
 
 	# recompile with signature...
@@ -179,4 +195,3 @@ lib*|*.dll)	# must be linking a shared lib...
 		${_WL_PREMAIN} "$@"
 	;;
 esac
-

@@ -1,5 +1,5 @@
 /* ====================================================================
- * Copyright (c) 2003 The OpenSSL Project.  All rights reserved.
+ * Copyright (c) 2011 The OpenSSL Project.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,19 +53,22 @@
 extern "C" {
 #endif
 
-void fips_w_lock(void);
-void fips_w_unlock(void);
-void fips_r_lock(void);
-void fips_r_unlock(void);
-int fips_is_started(void);
-void fips_set_started(void);
-int fips_is_owning_thread(void);
-int fips_set_owning_thread(void);
-void fips_set_selftest_fail(void);
-int fips_clear_owning_thread(void);
-unsigned char *fips_signature_witness(void);
+#define FIPS_MAX_CIPHER_TEST_SIZE	32
+#define fips_load_key_component(key, comp, pre) \
+	key->comp = BN_bin2bn(pre##_##comp, sizeof(pre##_##comp), key->comp); \
+	if (!key->comp) \
+		goto err
 
-#define FIPS_MAX_CIPHER_TEST_SIZE	16
+int fips_post_begin(void);
+void fips_post_end(void);
+int fips_post_started(int id, int subid, void *ex);
+int fips_post_success(int id, int subid, void *ex);
+int fips_post_failed(int id, int subid, void *ex);
+int fips_post_corrupt(int id, int subid, void *ex);
+int fips_post_status(void);
+
+#define FIPS_MODULE_VERSION_NUMBER	0x2001000FL
+#define FIPS_MODULE_VERSION_TEXT	"FIPS 2.0.16 validated module 24 Apr 2017"
 
 #ifdef  __cplusplus
 }

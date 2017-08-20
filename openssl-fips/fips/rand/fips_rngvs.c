@@ -7,11 +7,15 @@
  * Validation System (RNGVS)", May 25, 2004.
  *
  */
+
+#define OPENSSL_FIPSAPI
+
 #include <openssl/opensslconf.h>
 
 #ifndef OPENSSL_FIPS
 #include <stdio.h>
-int main()
+
+int main(int argc, char **argv)
 {
     printf("No FIPS RNG support\n");
     return 0;
@@ -24,13 +28,12 @@ int main()
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/fips_rand.h>
-#include <openssl/x509v3.h>
 #include <string.h>
 #include <ctype.h>
 
 #include "fips_utl.h"
 
-void vst(FILE *in, FILE *out)
+static void vst(FILE *in, FILE *out)
     {
     unsigned char *key = NULL;
     unsigned char *v = NULL;
@@ -87,16 +90,16 @@ void vst(FILE *in, FILE *out)
 		return;
 		}
 
-	    FIPS_rand_set_key(key, keylen);
-	    FIPS_rand_seed(v,16);
-	    FIPS_rand_set_dt(dt);
-	    if (FIPS_rand_bytes(ret,16) <= 0)
+	    FIPS_x931_set_key(key, keylen);
+	    FIPS_x931_seed(v,16);
+	    FIPS_x931_set_dt(dt);
+	    if (FIPS_x931_bytes(ret,16) <= 0)
 		{
 		fprintf(stderr, "Error getting PRNG value\n");
 	        return;
 	        }
 
-	    OutputValue("R",ret,16, out, 0);
+	    OutputValue("R", ret, 16, out, 0);
 	    OPENSSL_free(key);
 	    key = NULL;
 	    OPENSSL_free(dt);
@@ -107,7 +110,7 @@ void vst(FILE *in, FILE *out)
 	}
     }
 
-void mct(FILE *in, FILE *out)
+static void mct(FILE *in, FILE *out)
     {
     unsigned char *key = NULL;
     unsigned char *v = NULL;
@@ -165,12 +168,12 @@ void mct(FILE *in, FILE *out)
 		return;
 		}
 
-	    FIPS_rand_set_key(key, keylen);
-	    FIPS_rand_seed(v,16);
+	    FIPS_x931_set_key(key, keylen);
+	    FIPS_x931_seed(v,16);
 	    for (i = 0; i < 10000; i++)
 		{
-		    FIPS_rand_set_dt(dt);
-		    if (FIPS_rand_bytes(ret,16) <= 0)
+		    FIPS_x931_set_dt(dt);
+		    if (FIPS_x931_bytes(ret,16) <= 0)
 			{
 			fprintf(stderr, "Error getting PRNG value\n");
 		        return;
@@ -184,7 +187,7 @@ void mct(FILE *in, FILE *out)
 			}
 		}
 
-	    OutputValue("R",ret,16, out, 0);
+	    OutputValue("R", ret, 16, out, 0);
 	    OPENSSL_free(key);
 	    key = NULL;
 	    OPENSSL_free(dt);
@@ -202,22 +205,19 @@ int main(int argc, char **argv)
 #endif
     {
     FILE *in, *out;
-
-    fips_algtest_init();
-
     if (argc == 4)
 	{
 	in = fopen(argv[2], "r");
 	if (!in)
 		{
 		fprintf(stderr, "Error opening input file\n");
-		return(1);
+		exit(1);
 		}
 	out = fopen(argv[3], "w");
 	if (!out)
 		{
 		fprintf(stderr, "Error opening output file\n");
-		return(1);
+		exit(1);
 		}
 	}
     else if (argc == 2)
@@ -228,15 +228,14 @@ int main(int argc, char **argv)
     else
 	{
 	fprintf(stderr,"%s [mct|vst]\n",argv[0]);
-	return(1);
+	exit(1);
 	}
-
-    FIPS_rand_reset();
-    if (!FIPS_rand_test_mode())
+    fips_algtest_init();
+    FIPS_x931_reset();
+    if (!FIPS_x931_test_mode())
 	{
 	fprintf(stderr, "Error setting PRNG test mode\n");
-	do_print_errors();
-	return(1);
+	exit(1);
 	}
     if(!strcmp(argv[1],"mct"))
 	mct(in, out);
@@ -245,7 +244,7 @@ int main(int argc, char **argv)
     else
 	{
 	fprintf(stderr,"Don't know how to %s.\n",argv[1]);
-	return(1);
+	exit(1);
 	}
 
     if (argc == 4)

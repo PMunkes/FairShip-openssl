@@ -47,6 +47,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <string.h>
 #include <openssl/err.h>
 #include <openssl/fips.h>
@@ -55,32 +57,12 @@
 
 #ifdef OPENSSL_FIPS
 
-static struct
+__fips_constseg
+static const struct
     {
-    unsigned char key[16];
-    unsigned char plaintext[8];
-    unsigned char ciphertext[8];
-    } tests2[]=
-	{
-	{
-	{ 0x7c,0x4f,0x6e,0xf7,0xa2,0x04,0x16,0xec,
-	  0x0b,0x6b,0x7c,0x9e,0x5e,0x19,0xa7,0xc4 },
-	{ 0x06,0xa7,0xd8,0x79,0xaa,0xce,0x69,0xef },
-	{ 0x4c,0x11,0x17,0x55,0xbf,0xc4,0x4e,0xfd }
-	},
-	{
-	{ 0x5d,0x9e,0x01,0xd3,0x25,0xc7,0x3e,0x34,
-	  0x01,0x16,0x7c,0x85,0x23,0xdf,0xe0,0x68 },
-	{ 0x9c,0x50,0x09,0x0f,0x5e,0x7d,0x69,0x7e },
-	{ 0xd2,0x0b,0x18,0xdf,0xd9,0x0d,0x9e,0xff },
-	}
-	};
-
-static struct
-    {
-    unsigned char key[24];
-    unsigned char plaintext[8];
-    unsigned char ciphertext[8];
+    const unsigned char key[24];
+    const unsigned char plaintext[8];
+    const unsigned char ciphertext[8];
     } tests3[]=
 	{
 	{
@@ -99,36 +81,23 @@ static struct
 	},
 	};
 
-void FIPS_corrupt_des()
-    {
-    tests2[0].plaintext[0]++;
-    }
-
 int FIPS_selftest_des()
     {
     int n, ret = 0;
     EVP_CIPHER_CTX ctx;
-    EVP_CIPHER_CTX_init(&ctx);
-    /* Encrypt/decrypt with 2-key 3DES and compare to known answers */
-    for(n=0 ; n < 2 ; ++n)
-	{
-	if (!fips_cipher_test(&ctx, EVP_des_ede_ecb(),
-				tests2[n].key, NULL,
-				tests2[n].plaintext, tests2[n].ciphertext, 8))
-		goto err;
-	}
+    FIPS_cipher_ctx_init(&ctx);
 
     /* Encrypt/decrypt with 3DES and compare to known answers */
     for(n=0 ; n < 2 ; ++n)
 	{
-	if (!fips_cipher_test(&ctx, EVP_des_ede3_ecb(),
+	if (!fips_cipher_test(FIPS_TEST_CIPHER, &ctx, EVP_des_ede3_ecb(),
 				tests3[n].key, NULL,
 				tests3[n].plaintext, tests3[n].ciphertext, 8))
 		goto err;
 	}
     ret = 1;
     err:
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    FIPS_cipher_ctx_cleanup(&ctx);
     if (ret == 0)
 	    FIPSerr(FIPS_F_FIPS_SELFTEST_DES,FIPS_R_SELFTEST_FAILED);
 

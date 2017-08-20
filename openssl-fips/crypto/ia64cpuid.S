@@ -1,6 +1,13 @@
 // Works on all IA-64 platforms: Linux, HP-UX, Win64i...
 // On Win64i compile with ias.exe.
 .text
+
+.global	OPENSSL_cpuid_setup#
+.proc	OPENSSL_cpuid_setup#
+OPENSSL_cpuid_setup:
+{ .mib;	br.ret.sptk.many	b0		};;
+.endp	OPENSSL_cpuid_setup#
+
 .global	OPENSSL_rdtsc#
 .proc	OPENSSL_rdtsc#
 OPENSSL_rdtsc:
@@ -19,7 +26,7 @@ OPENSSL_atomic_add:
 { .mii;	mov		ar.ccv=r2
 	add		r8=r2,r33
 	mov		r3=r2		};;
-{ .mmi;	mf
+{ .mmi;	mf;;
 	cmpxchg4.acq	r2=[r32],r8,ar.ccv
 	nop.i		0		};;
 { .mib;	cmp.ne		p6,p0=r2,r3
@@ -119,3 +126,128 @@ OPENSSL_wipe_cpu:
 	mov		ar.lc=r3
 	br.ret.sptk	b0		};;
 .endp	OPENSSL_wipe_cpu#
+
+.global	OPENSSL_cleanse#
+.proc	OPENSSL_cleanse#
+OPENSSL_cleanse:
+{ .mib;	cmp.eq		p6,p0=0,r33	    // len==0
+#if defined(_HPUX_SOURCE) && !defined(_LP64)
+	addp4		r32=0,r32
+#endif
+(p6)	br.ret.spnt	b0		};;
+{ .mib;	and		r2=7,r32
+	cmp.leu		p6,p0=15,r33	    // len>=15
+(p6)	br.cond.dptk	.Lot		};;
+
+.Little:
+{ .mib;	st1		[r32]=r0,1
+	cmp.ltu		p6,p7=1,r33	}  // len>1
+{ .mbb;	add		r33=-1,r33	   // len--
+(p6)	br.cond.dptk	.Little
+(p7)	br.ret.sptk.many	b0	};;
+
+.Lot:
+{ .mib;	cmp.eq		p6,p0=0,r2
+(p6)	br.cond.dptk	.Laligned	};;
+{ .mmi;	st1		[r32]=r0,1;;
+	and		r2=7,r32	}
+{ .mib;	add		r33=-1,r33
+	br		.Lot		};;
+
+.Laligned:
+{ .mmi;	st8		[r32]=r0,8
+	and		r2=-8,r33	    // len&~7
+	add		r33=-8,r33	};; // len-=8
+{ .mib;	cmp.ltu		p6,p0=8,r2	    // ((len+8)&~7)>8
+(p6)	br.cond.dptk	.Laligned	};;
+
+{ .mbb;	cmp.eq		p6,p7=r0,r33
+(p7)	br.cond.dpnt	.Little
+(p6)	br.ret.sptk.many	b0	};;
+.endp	OPENSSL_cleanse#
+
+.global	OPENSSL_instrument_bus#
+.proc	OPENSSL_instrument_bus#
+OPENSSL_instrument_bus:
+{ .mmi;	mov		r2=r33
+#if defined(_HPUX_SOURCE) && !defined(_LP64)
+	addp4		r32=0,r32
+#endif
+					}
+{ .mmi;	mov		r8=ar.itc;;
+	mov		r10=r0
+	mov		r9=r8		};;
+
+{ .mmi;	fc		r32;;
+	ld4		r8=[r32]	};;
+{ .mmi;	mf
+	mov		ar.ccv=r8
+	add		r8=r8,r10	};;
+{ .mmi;	cmpxchg4.acq	r3=[r32],r8,ar.ccv
+					};;
+.Loop:
+{ .mmi;	mov		r8=ar.itc;;
+	sub		r10=r8,r9		// diff=tick-lasttick
+	mov		r9=r8		};;	// lasttick=tick
+{ .mmi;	fc		r32;;
+	ld4		r8=[r32]	};;
+{ .mmi;	mf
+	mov		ar.ccv=r8
+	add		r8=r8,r10	};;
+{ .mmi;	cmpxchg4.acq	r3=[r32],r8,ar.ccv
+	add		r33=-1,r33
+	add		r32=4,r32	};;
+{ .mib;	cmp4.ne		p6,p0=0,r33
+(p6)	br.cond.dptk	.Loop		};;
+
+{ .mib;	sub		r8=r2,r33
+	br.ret.sptk.many	b0	};;
+.endp	OPENSSL_instrument_bus#
+
+.global	OPENSSL_instrument_bus2#
+.proc	OPENSSL_instrument_bus2#
+OPENSSL_instrument_bus2:
+{ .mmi;	mov		r2=r33			// put aside cnt
+#if defined(_HPUX_SOURCE) && !defined(_LP64)
+	addp4		r32=0,r32
+#endif
+					}
+{ .mmi;	mov		r8=ar.itc;;
+	mov		r10=r0
+	mov		r9=r8		};;
+
+{ .mmi;	fc		r32;;
+	ld4		r8=[r32]	};;
+{ .mmi;	mf
+	mov		ar.ccv=r8
+	add		r8=r8,r10	};;
+{ .mmi;	cmpxchg4.acq	r3=[r32],r8,ar.ccv
+					};;
+
+{ .mmi;	mov		r8=ar.itc;;
+	sub		r10=r8,r9
+	mov		r9=r8		};;
+.Loop2:
+{ .mmi;	mov		r11=r10			// lastdiff=diff
+	add		r34=-1,r34	};;	// --max
+{ .mmi;	fc		r32;;
+	ld4		r8=[r32]
+	cmp4.eq		p6,p0=0,r34	};;
+{ .mmi;	mf
+	mov		ar.ccv=r8
+	add		r8=r8,r10	};;
+{ .mmb;	cmpxchg4.acq	r3=[r32],r8,ar.ccv
+(p6)	br.cond.spnt	.Ldone2		};;
+
+{ .mmi;	mov		r8=ar.itc;;
+	sub		r10=r8,r9		// diff=tick-lasttick
+	mov		r9=r8		};;	// lasttick=tick
+{ .mmi;	cmp.ne		p6,p0=r10,r11;;		// diff!=lastdiff
+(p6)	add		r33=-1,r33	};;	// conditional --cnt
+{ .mib;	cmp4.ne		p7,p0=0,r33
+(p6)	add		r32=4,r32		// conditional ++out
+(p7)	br.cond.dptk	.Loop2		};;
+.Ldone2:
+{ .mib;	sub		r8=r2,r33
+	br.ret.sptk.many	b0	};;
+.endp	OPENSSL_instrument_bus2#

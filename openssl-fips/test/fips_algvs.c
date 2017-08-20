@@ -70,11 +70,78 @@ int main(int argc, char **argv)
 }
 #else
 
+#if defined(__vxworks)
+
+#include <taskLibCommon.h>
+#include <string.h>
+
+int fips_algvs_main(int argc, char **argv);
+#define main fips_algvs_main
+
+static int fips_algvs_argv(char *a0)
+{
+	char *argv[32] = { "fips_algvs" };
+	int argc = 1;
+	int main_ret;
+
+	if (a0) {
+		char *scan = a0, *arg = a0;
+
+		while (*scan) {
+			if (*scan++ == ' ') {
+				scan[-1] = '\0';
+				argv[argc++] = arg;
+				if (argc == (sizeof(argv)/sizeof(argv[0])-1))
+					break;
+
+				while (*scan == ' ') scan++;
+				arg = scan;
+			}
+		}
+		if (*scan == '\0') argv[argc++] = arg;
+	}
+
+	argv[argc] = NULL;
+
+	main_ret = fips_algvs_main(argc, argv);
+
+	if (a0) free(a0);
+
+	return main_ret;
+}
+
+int fips_algvs(int a0)
+{
+	return taskSpawn("fips_algvs", 100, (VX_FP_TASK | VX_SPE_TASK), 100000,
+			(FUNCPTR)fips_algvs_argv,
+			a0 ? strdup(a0) : 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+}
+
+static FILE *fips_fopen(const char *path, const char *mode)
+{
+	char fips_path [256];
+
+	if (path[0] != '/' && strlen(path) < (sizeof(fips_path)-8)) {
+		strcpy(fips_path,"/fips0/");
+		strcat(fips_path,path);
+		return fopen(fips_path,mode);
+	}
+	return fopen(path,mode);
+}
+#define fopen fips_fopen
+#endif
+
 #define FIPS_ALGVS
 
 extern int fips_aesavs_main(int argc, char **argv);
+extern int fips_cmactest_main(int argc, char **argv);
 extern int fips_desmovs_main(int argc, char **argv);
+extern int fips_dhvs_main(int argc, char **argv);
+extern int fips_drbgvs_main(int argc,char **argv);
 extern int fips_dssvs_main(int argc, char **argv);
+extern int fips_ecdhvs_main(int argc, char **argv);
+extern int fips_ecdsavs_main(int argc, char **argv);
+extern int fips_gcmtest_main(int argc, char **argv);
 extern int fips_hmactest_main(int argc, char **argv);
 extern int fips_rngvs_main(int argc, char **argv);
 extern int fips_rsagtest_main(int argc, char **argv);
@@ -83,9 +150,16 @@ extern int fips_rsavtest_main(int argc, char **argv);
 extern int fips_shatest_main(int argc, char **argv);
 extern int fips_test_suite_main(int argc, char **argv);
 
+#if !defined(_TMS320C6400_PLUS) && !defined(_TMS320C6400)
 #include "fips_aesavs.c"
+#include "fips_cmactest.c"
 #include "fips_desmovs.c"
+#include "fips_dhvs.c"
+#include "fips_drbgvs.c"
 #include "fips_dssvs.c"
+#include "fips_ecdhvs.c"
+#include "fips_ecdsavs.c"
+#include "fips_gcmtest.c"
 #include "fips_hmactest.c"
 #include "fips_rngvs.c"
 #include "fips_rsagtest.c"
@@ -93,6 +167,28 @@ extern int fips_test_suite_main(int argc, char **argv);
 #include "fips_rsavtest.c"
 #include "fips_shatest.c"
 #include "fips_test_suite.c"
+
+#else
+#include "aes/fips_aesavs.c"
+#include "cmac/fips_cmactest.c"
+#include "des/fips_desmovs.c"
+#include "dh/fips_dhvs.c"
+#include "rand/fips_drbgvs.c"
+#include "dsa/fips_dssvs.c"
+#include "ecdh/fips_ecdhvs.c"
+#include "ecdsa/fips_ecdsavs.c"
+#include "aes/fips_gcmtest.c"
+#include "hmac/fips_hmactest.c"
+#include "rand/fips_rngvs.c"
+#include "rsa/fips_rsagtest.c"
+#include "rsa/fips_rsastest.c"
+#include "rsa/fips_rsavtest.c"
+#include "sha/fips_shatest.c"
+#include "fips_test_suite.c"
+
+#pragma DATA_SECTION(aucCmBootDspLoad, "BootDspSection");
+volatile unsigned char aucCmBootDspLoad[8*1024];
+#endif
 
 typedef struct
 	{
@@ -102,8 +198,14 @@ typedef struct
 
 static ALGVS_FUNCTION algvs[] = {
 	{"fips_aesavs", fips_aesavs_main}, 
+	{"fips_cmactest", fips_cmactest_main}, 
 	{"fips_desmovs", fips_desmovs_main}, 
+	{"fips_dhvs", fips_dhvs_main}, 
+	{"fips_drbgvs", fips_drbgvs_main}, 
 	{"fips_dssvs", fips_dssvs_main}, 
+	{"fips_ecdhvs", fips_ecdhvs_main}, 
+	{"fips_ecdsavs", fips_ecdsavs_main}, 
+	{"fips_gcmtest", fips_gcmtest_main}, 
 	{"fips_hmactest", fips_hmactest_main}, 
 	{"fips_rngvs", fips_rngvs_main}, 
 	{"fips_rsagtest", fips_rsagtest_main}, 
@@ -186,7 +288,6 @@ static int chopup_args(ARGS *arg, char *buf, int *argc, char **argv[])
 
 static int run_prg(int argc, char **argv)
 	{
-        int rv=(-100);
 	ALGVS_FUNCTION *t;
 	const char *prg_name;
 	prg_name = strrchr(argv[0], '/');
@@ -196,19 +297,15 @@ static int run_prg(int argc, char **argv)
 		prg_name = argv[0];
 	for (t = algvs; t->name; t++)
 		{
-		if (!strcmp(prg_name, t->name)) 
-			{
-			rv=t->func(argc, argv);
-			break;
-			}
+		if (!strcmp(prg_name, t->name))
+			return t->func(argc, argv);
 		}
-	RAND_set_rand_method(NULL);
-	return rv;
+	return -100;
 	}
 
 int main(int argc, char **argv)
 	{
-	char buf[1024];
+	static char buf[1024];
 	char **args = argv + 1;
 	const char *sname = "fipstests.sh";
 	ARGS arg;
@@ -225,6 +322,20 @@ int main(int argc, char **argv)
 	CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_ON);
 #endif
 
+#if defined(_TMS320C6400_PLUS)
+	SysInit();
+#endif
+
+#if (defined(__arm__) || defined(__aarch64__))
+	if (*args && !strcmp(*args, "-noaccel"))
+		{
+		extern unsigned int OPENSSL_armcap_P;
+
+		OPENSSL_armcap_P=0;
+		args++;
+		argc--;
+		}
+#endif
 	if (*args && *args[0] != '-')
 		{
 		rv = run_prg(argc - 1, args);
@@ -287,8 +398,8 @@ int main(int argc, char **argv)
 				printf("\n");
 				}
 			rv = run_prg(xargc, xargv);
-			if (FIPS_mode())
-				FIPS_mode_set(0);
+			if (FIPS_module_mode())
+				FIPS_module_mode_set(0, NULL);
 			if (rv != 0)
 				nerr++;
 			if (rv == -100)

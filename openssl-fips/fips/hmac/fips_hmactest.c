@@ -1,5 +1,5 @@
 /* fips_hmactest.c */
-/* Written by Dr Stephen N Henson (shenson@bigfoot.com) for the OpenSSL
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2005.
  */
 /* ====================================================================
@@ -56,6 +56,8 @@
  *
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -63,8 +65,7 @@
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/err.h>
-#include <openssl/fips.h>
-#include <openssl/x509v3.h>
+#include <openssl/bn.h>
 
 #ifndef OPENSSL_FIPS
 
@@ -76,6 +77,7 @@ int main(int argc, char *argv[])
 
 #else
 
+#include <openssl/fips.h>
 #include "fips_utl.h"
 
 static int hmac_test(const EVP_MD *md, FILE *out, FILE *in);
@@ -90,8 +92,8 @@ int main(int argc, char **argv)
 #endif
 	{
 	FILE *in = NULL, *out = NULL;
-	int ret = 1;
 
+	int ret = 1;
 	fips_algtest_init();
 
 	if (argc == 1)
@@ -125,9 +127,6 @@ int main(int argc, char **argv)
 		ret = 0;
 
 	end:
-
-	if (ret)
-		do_print_errors();
 
 	if (in && (in != stdin))
 		fclose(in);
@@ -318,7 +317,7 @@ static int print_hmac(const EVP_MD *emd, FILE *out,
 	fputs("Mac = ", out);
 	for (i = 0; i < Tlen; i++)
 		fprintf(out, "%02x", md[i]);
-	fputs("\n", out);
+	fputs(RESP_EOL, out);
 	return 1;
 	}
 

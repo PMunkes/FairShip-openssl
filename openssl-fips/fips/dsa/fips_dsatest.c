@@ -56,12 +56,16 @@
  * [including the GNU Public Licence.]
  */
 
+#define OPENSSL_FIPSAPI
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#ifndef NO_SYS_TYPES_H
 #include <sys/types.h>
 #include <sys/stat.h>
+#endif
 
 #include "e_os.h"
 
@@ -69,11 +73,8 @@
 #include <openssl/rand.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
-#ifndef OPENSSL_NO_ENGINE
-#include <openssl/engine.h>
-#endif
-#include <openssl/fips.h>
-#include <openssl/fips_rand.h>
+#include <openssl/evp.h>
+#include <openssl/bn.h>
 
 
 #if defined(OPENSSL_NO_DSA) || !defined(OPENSSL_FIPS)
@@ -83,6 +84,9 @@ int main(int argc, char *argv[])
     return(0);
 }
 #else
+#include <openssl/dsa.h>
+#include <openssl/fips.h>
+#include <openssl/fips_rand.h>
 #include <openssl/dsa.h>
 
 #ifdef OPENSSL_SYS_WIN16
@@ -138,28 +142,23 @@ static unsigned char out_g[] = {
 	};
 
 
+__fips_constseg
 static const unsigned char str1[]="12345678901234567890";
 
+__fips_constseg
 static const char rnd_seed[] = "string to make the random number generator think it has entropy";
 
-#ifdef FIPS_ALGVS
-int fips_dsatest_main(int argc, char **argv)
-#else
 int main(int argc, char **argv)
-#endif
 	{
 	DSA *dsa=NULL;
-	EVP_PKEY pk;
+	DSA_SIG *sig = NULL;
 	int counter,ret=0,i,j;
-	unsigned int slen;
 	unsigned char buf[256];
 	unsigned long h;
 	BN_GENCB cb;
-	EVP_MD_CTX mctx;
 	BN_GENCB_set(&cb, dsa_cb, stderr);
-	EVP_MD_CTX_init(&mctx);
 
-	fips_algtest_init();
+    	fips_algtest_init();
 
 	fprintf(stderr,"test generation of DSA parameters\n");
 
@@ -210,33 +209,24 @@ int main(int argc, char **argv)
 		goto end;
 		}
 	DSA_generate_key(dsa);
-	pk.type = EVP_PKEY_DSA;
-	pk.pkey.dsa = dsa;
 
-	if (!EVP_SignInit_ex(&mctx, EVP_dss1(), NULL))
-		goto end;
-	if (!EVP_SignUpdate(&mctx, str1, 20))
-		goto end;
-	if (!EVP_SignFinal(&mctx, buf, &slen, &pk))
+	sig = FIPS_dsa_sign(dsa, str1, 20, EVP_sha1());
+	if (!sig)
 		goto end;
 
-	if (!EVP_VerifyInit_ex(&mctx, EVP_dss1(), NULL))
-		goto end;
-	if (!EVP_VerifyUpdate(&mctx, str1, 20))
-		goto end;
-	if (EVP_VerifyFinal(&mctx, buf, slen, &pk) != 1)
+	if (FIPS_dsa_verify(dsa, str1, 20, EVP_sha1(), sig) != 1)
 		goto end;
 
 	ret = 1;
 
 end:
-	if (!ret)
-		do_print_errors();
+	if (sig)
+		FIPS_dsa_sig_free(sig);
 	if (dsa != NULL) FIPS_dsa_free(dsa);
-	EVP_MD_CTX_cleanup(&mctx);
 #if 0
 	CRYPTO_mem_leaks(bio_err);
 #endif
+	EXIT(!ret);
 	return(!ret);
 	}
 

@@ -10,6 +10,9 @@
 # pragma __nostandard
 #endif
 
+const void         *FIPS_text_start(void);
+const void         *FIPS_text_end(void);
+
 #include "e_os.h"
 
 #if !defined(POINTER_TO_FUNCTION_IS_POINTER_TO_1ST_INSTRUCTION)
@@ -19,9 +22,28 @@
 	(defined(__linux) && (defined(__arm) || defined(__arm__)))	|| \
 	(defined(__i386) || defined(__i386__))				|| \
 	(defined(__x86_64) || defined(__x86_64__))			|| \
-	defined(__ANDROID__)						|| \
 	(defined(vax) || defined(__vax__))
 #  define POINTER_TO_FUNCTION_IS_POINTER_TO_1ST_INSTRUCTION
+# endif
+#endif
+
+#if !defined(FIPS_REF_POINT_IS_CROSS_COMPILER_AWARE)
+# if	(defined(__ANDROID__) && (defined(__arm__) || defined(__arm)	|| \
+				  defined(__aarch64__)			|| \
+				  defined(__i386__)|| defined(__i386)))	|| \
+	(defined(__vxworks)   && (defined(__ppc__) || defined(__ppc)	|| \
+				  defined(__mips__)|| defined(__mips)	|| \
+				  defined(__i386__)|| defined(__i386)))	|| \
+        (defined(__NetBSD__)  && (defined(__powerpc__) || defined(__i386))) || \
+	(defined(__linux)     && ((defined(__PPC__) && !defined(__PPC64__)) || \
+				  defined(__arm__) || defined(__arm)) || \
+				  defined(__mips__))	|| \
+	(defined(__APPLE__) /* verified on all MacOS X & iOS flavors */)|| \
+	(defined(_TMS320C6X))						|| \
+	(defined(__ECOS__))						|| \
+	(defined(_WIN32)      && defined(_MSC_VER))			|| \
+	(defined(__QNX__)     && defined(__ARM__))
+#  define FIPS_REF_POINT_IS_CROSS_COMPILER_AWARE
 # endif
 #endif
 
@@ -37,20 +59,55 @@ static void *instruction_pointer_xlc(void);
 #endif
 
 #ifdef FIPS_START
-#define FIPS_ref_point FIPS_text_start
+# define FIPS_ref_point FIPS_text_start
+# ifdef FIPS_REF_POINT_IS_CROSS_COMPILER_AWARE
+#  define instruction_pointer	FIPS_text_startX
+# endif
 /* Some compilers put string literals into a separate segment. As we
  * are mostly interested to hash AES tables in .rodata, we declare
  * reference points accordingly. In case you wonder, the values are
  * big-endian encoded variable names, just to prevent these arrays
  * from being merged by linker. */
+# if defined(_MSC_VER)
+#  pragma code_seg("fipstx")
+#  pragma code_seg()
+   __declspec(allocate("fipstx"))
+const unsigned int FIPS_text_startX[]=
+	{ 0x46495053, 0x5f746578, 0x745f7374, 0x61727458 };
+#  pragma const_seg("fipsro$a")
+#  pragma const_seg()
+   __declspec(allocate("fipsro$a"))
+# elif defined(_TMS320C6X)
+#  pragma CODE_SECTION(instruction_pointer,".fips_text:start")
+#  pragma CODE_SECTION(FIPS_ref_point,".fips_text:start")
+#  pragma DATA_SECTION(FIPS_rodata_start,".fips_const:start")
+# endif
 const unsigned int FIPS_rodata_start[]=
 	{ 0x46495053, 0x5f726f64, 0x6174615f, 0x73746172 };
 #else
-#define FIPS_ref_point FIPS_text_end
+# define FIPS_ref_point FIPS_text_end
+# ifdef FIPS_REF_POINT_IS_CROSS_COMPILER_AWARE
+#  define instruction_pointer	FIPS_text_endX
+# endif
+# if defined(_MSC_VER)
+#  pragma code_seg("fipstx$z")
+#  pragma code_seg()
+   __declspec(allocate("fipstx$z"))
+const unsigned int FIPS_text_endX[]=
+	{ 0x46495053, 0x5f746578, 0x745f656e, 0x64585b5d };
+#  pragma const_seg("fipsro$z")
+#  pragma const_seg()
+   __declspec(allocate("fipsro$z"))
+# elif defined(_TMS320C6X)
+#  pragma CODE_SECTION(instruction_pointer,".fips_text:end")
+#  pragma CODE_SECTION(FIPS_ref_point,".fips_text:end")
+#  pragma DATA_SECTION(FIPS_rodata_end,".fips_const:end")
+# endif
 const unsigned int FIPS_rodata_end[]=
 	{ 0x46495053, 0x5f726f64, 0x6174615f, 0x656e645b };
 #endif
 
+#if !defined(_MSC_VER) || !defined(instruction_pointer)
 /*
  * I declare reference function as static in order to avoid certain
  * pitfalls in -dynamic linker behaviour...
@@ -86,9 +143,10 @@ static void *instruction_pointer(void)
 			"move	%0,$31\n\t"
 			"move	$31,%1"		/* restore ra */
 			: "=r"(ret),"=r"(scratch) );
-# elif	defined(__ppc__) || defined(__powerpc) || defined(__powerpc__) || \
+# elif	defined(__ppc__) || defined(__ppc) || \
+	defined(__powerpc) || defined(__powerpc__) || \
 	defined(__POWERPC__) || defined(_POWER) || defined(__PPC__) || \
-	defined(__PPC64__) || defined(__powerpc64__)
+	defined(__PPC64__) || defined(__ppc64__) || defined(__powerpc64__)
 #   define INSTRUCTION_POINTER_IMPLEMENTED
     void *scratch;
     __asm __volatile (	"mfspr	%1,8\n\t"	/* save lr */
@@ -112,6 +170,9 @@ static void *instruction_pointer(void)
 #   define INSTRUCTION_POINTER_IMPLEMENTED
     __asm __volatile (	"leaq	0(%%rip),%0" : "=r"(ret) );
     ret = (void *)((size_t)ret&~3UL); /* align for better performance */
+# elif defined(__arm) || defined(__arm__)
+#   define INSTRUCTION_POINTER_IMPLEMENTED
+    __asm __volatile (	"sub	%0,pc,#8" : "=r"(ret) );
 # endif
 #elif	defined(__DECC) && defined(__alpha)
 #   define INSTRUCTION_POINTER_IMPLEMENTED
@@ -128,16 +189,21 @@ static void *instruction_pointer(void)
 #endif
   return ret;
 }
+#endif
 
 /*
  * This function returns pointer to an instruction in the vicinity of
  * its entry point, but not outside this object module. This guarantees
  * that sequestered code is covered...
  */
-void *FIPS_ref_point()
+const void *FIPS_ref_point()
 {
-#if defined(__APPLE__)
-	return FIPS_ref_point;
+#if	defined(FIPS_REF_POINT_IS_CROSS_COMPILER_AWARE)
+# if defined(__thumb__) || defined(__thumb)
+    return (void *)((size_t)instruction_pointer&~1);
+# else
+    return (void *)instruction_pointer;
+# endif
 #elif	defined(INSTRUCTION_POINTER_IMPLEMENTED)
     return instruction_pointer();
 /* Below we essentially cover vendor compilers which do not support
@@ -176,8 +242,6 @@ void *FIPS_ref_point()
 # else
     return (void *)FIPS_ref_point;
 # endif
-#elif	defined(__vxworks)
-    return (void *)FIPS_ref_point;
 /*
  * In case you wonder why there is no #ifdef __linux. All Linux targets
  * are GCC-based and therefore are covered by instruction_pointer above

@@ -50,14 +50,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <openssl/opensslconf.h>
+#include <openssl/crypto.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
+#include <openssl/fips.h>
 
 #ifndef FIPSCANISTER_O
 int FIPS_selftest_failed() { return 0; }
 void FIPS_selftest_check() {}
 void OPENSSL_cleanse(void *p,size_t len) {}
+unsigned int  OPENSSL_ia32cap_P[2];
 #endif
 
 #ifdef OPENSSL_FIPS
@@ -65,7 +67,7 @@ void OPENSSL_cleanse(void *p,size_t len) {}
 static void hmac_init(SHA_CTX *md_ctx,SHA_CTX *o_ctx,
 		      const char *key)
     {
-    int len=strlen(key);
+    size_t len=strlen(key);
     int i;
     unsigned char keymd[HMAC_MAX_MD_CBLOCK];
     unsigned char pad[HMAC_MAX_MD_CBLOCK];
@@ -139,7 +141,7 @@ int main(int argc,char **argv)
 	for( ; ; )
 	    {
 	    char buf[1024];
-	    int l=fread(buf,1,sizeof buf,f);
+	    size_t l=fread(buf,1,sizeof buf,f);
 
 	    if(l == 0)
 		{

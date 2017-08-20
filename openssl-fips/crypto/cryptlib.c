@@ -1,6 +1,6 @@
 /* crypto/cryptlib.c */
 /* ====================================================================
- * Copyright (c) 1998-2003 The OpenSSL Project.  All rights reserved.
+ * Copyright (c) 1998-2006 The OpenSSL Project.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -121,250 +121,65 @@
 static double SSLeay_MSVC5_hack=0.0; /* and for VC1.5 */
 #endif
 
-static void (MS_FAR *locking_callback)(int mode,int type,
-	const char *file,int line)=NULL;
-static int (MS_FAR *add_lock_callback)(int *pointer,int amount,
-	int type,const char *file,int line)=NULL;
-static unsigned long (MS_FAR *id_callback)(void)=NULL;
-
-int CRYPTO_num_locks(void)
-	{
-	return CRYPTO_NUM_LOCKS;
-	}
-
-void (*CRYPTO_get_locking_callback(void))(int mode,int type,const char *file,
-		int line)
-	{
-	return(locking_callback);
-	}
-
-int (*CRYPTO_get_add_lock_callback(void))(int *num,int mount,int type,
-					  const char *file,int line)
-	{
-	return(add_lock_callback);
-	}
-
-void CRYPTO_set_locking_callback(void (*func)(int mode,int type,
-					      const char *file,int line))
-	{
-	locking_callback=func;
-	}
-
-void CRYPTO_set_add_lock_callback(int (*func)(int *num,int mount,int type,
-					      const char *file,int line))
-	{
-	add_lock_callback=func;
-	}
-
-unsigned long (*CRYPTO_get_id_callback(void))(void)
-	{
-	return(id_callback);
-	}
-
-void CRYPTO_set_id_callback(unsigned long (*func)(void))
-	{
-	id_callback=func;
-	}
-
-unsigned long CRYPTO_thread_id(void)
-	{
-	unsigned long ret=0;
-
-	if (id_callback == NULL)
-		{
-#ifdef OPENSSL_SYS_WIN16
-		ret=(unsigned long)GetCurrentTask();
-#elif defined(OPENSSL_SYS_WIN32)
-		ret=(unsigned long)GetCurrentThreadId();
-#elif defined(GETPID_IS_MEANINGLESS)
-		ret=1L;
-#else
-		ret=(unsigned long)getpid();
-#endif
-		}
-	else
-		ret=id_callback();
-	return(ret);
-	}
-
-static void (*do_dynlock_cb)(int mode, int type, const char *file, int line);
-
-void int_CRYPTO_set_do_dynlock_callback(
-	void (*dyn_cb)(int mode, int type, const char *file, int line))
-	{
-	do_dynlock_cb = dyn_cb;
-	}
-
-void CRYPTO_lock(int mode, int type, const char *file, int line)
-	{
-#ifdef LOCK_DEBUG
-		{
-		char *rw_text,*operation_text;
-
-		if (mode & CRYPTO_LOCK)
-			operation_text="lock  ";
-		else if (mode & CRYPTO_UNLOCK)
-			operation_text="unlock";
-		else
-			operation_text="ERROR ";
-
-		if (mode & CRYPTO_READ)
-			rw_text="r";
-		else if (mode & CRYPTO_WRITE)
-			rw_text="w";
-		else
-			rw_text="ERROR";
-
-		fprintf(stderr,"lock:%08lx:(%s)%s %-18s %s:%d\n",
-			CRYPTO_thread_id(), rw_text, operation_text,
-			CRYPTO_get_lock_name(type), file, line);
-		}
-#endif
-	if (type < 0)
-		{
-		if (do_dynlock_cb)
-			do_dynlock_cb(mode, type, file, line);
-		}
-	else
-		if (locking_callback != NULL)
-			locking_callback(mode,type,file,line);
-	}
-
-int CRYPTO_add_lock(int *pointer, int amount, int type, const char *file,
-	     int line)
-	{
-	int ret = 0;
-
-	if (add_lock_callback != NULL)
-		{
-#ifdef LOCK_DEBUG
-		int before= *pointer;
-#endif
-
-		ret=add_lock_callback(pointer,amount,type,file,line);
-#ifdef LOCK_DEBUG
-		fprintf(stderr,"ladd:%08lx:%2d+%2d->%2d %-18s %s:%d\n",
-			CRYPTO_thread_id(),
-			before,amount,ret,
-			CRYPTO_get_lock_name(type),
-			file,line);
-#endif
-		}
-	else
-		{
-		CRYPTO_lock(CRYPTO_LOCK|CRYPTO_WRITE,type,file,line);
-
-		ret= *pointer+amount;
-#ifdef LOCK_DEBUG
-		fprintf(stderr,"ladd:%08lx:%2d+%2d->%2d %-18s %s:%d\n",
-			CRYPTO_thread_id(),
-			*pointer,amount,ret,
-			CRYPTO_get_lock_name(type),
-			file,line);
-#endif
-		*pointer=ret;
-		CRYPTO_lock(CRYPTO_UNLOCK|CRYPTO_WRITE,type,file,line);
-		}
-	return(ret);
-	}
-
 #if	defined(__i386)   || defined(__i386__)   || defined(_M_IX86) || \
 	defined(__INTEL__) || \
 	defined(__x86_64) || defined(__x86_64__) || defined(_M_AMD64) || defined(_M_X64)
 
-unsigned long  OPENSSL_ia32cap_P=0;
-unsigned long *OPENSSL_ia32cap_loc(void) { return &OPENSSL_ia32cap_P; }
+unsigned int  OPENSSL_ia32cap_P[2];
+unsigned int *OPENSSL_ia32cap_loc(void) { return OPENSSL_ia32cap_P; }
 
 #if defined(OPENSSL_CPUID_OBJ) && !defined(OPENSSL_NO_ASM) && !defined(I386_ONLY)
 #define OPENSSL_CPUID_SETUP
+#if defined(_WIN32)
+typedef unsigned __int64 IA32CAP;
+#else
+typedef unsigned long long IA32CAP;
+#endif
 void OPENSSL_cpuid_setup(void)
 { static int trigger=0;
-  unsigned long OPENSSL_ia32_cpuid(void);
+  IA32CAP OPENSSL_ia32_cpuid(void);
+  IA32CAP vec;
   char *env;
 
     if (trigger)	return;
 
     trigger=1;
-    if ((env=getenv("OPENSSL_ia32cap")))
-	OPENSSL_ia32cap_P = strtoul(env,NULL,0)|(1<<10);
+    if ((env=getenv("OPENSSL_ia32cap"))) {
+	int off = (env[0]=='~')?1:0;
+#if defined(_WIN32)
+    	if (!sscanf(env+off,"%I64i",&vec)) vec = strtoul(env+off,NULL,0);
+#else
+	vec = strtoull(env+off,NULL,0);
+#endif
+	if (off) vec = OPENSSL_ia32_cpuid()&~vec;
+    }
     else
-	OPENSSL_ia32cap_P = OPENSSL_ia32_cpuid()|(1<<10);
+	vec = OPENSSL_ia32_cpuid();
+
     /*
      * |(1<<10) sets a reserved bit to signal that variable
      * was initialized already... This is to avoid interference
      * with cpuid snippets in ELF .init segment.
      */
+    OPENSSL_ia32cap_P[0] = (unsigned int)vec|(1<<10);
+    OPENSSL_ia32cap_P[1] = (unsigned int)(vec>>32);
 }
 #endif
 
 #else
-unsigned long *OPENSSL_ia32cap_loc(void) { return NULL; }
+unsigned int *OPENSSL_ia32cap_loc(void) { return NULL; }
 #endif
 int OPENSSL_NONPIC_relocated = 0;
-#if !defined(OPENSSL_CPUID_SETUP)
+#if !defined(OPENSSL_CPUID_SETUP) && !defined(OPENSSL_CPUID_OBJ)
 void OPENSSL_cpuid_setup(void) {}
 #endif
 
 #if (defined(_WIN32) || defined(__CYGWIN__)) && defined(_WINDLL)
-
-#ifdef OPENSSL_FIPS
-
-#include <tlhelp32.h>
-#if defined(__GNUC__) && __GNUC__>=2
-static int DllInit(void) __attribute__((constructor));
-#elif defined(_MSC_VER)
-static int DllInit(void);
-# ifdef _WIN64
-# pragma section(".CRT$XCU",read)
-  __declspec(allocate(".CRT$XCU"))
-# else
-# pragma data_seg(".CRT$XCU")
-# endif
-  static int (*p)(void) = DllInit;
-# pragma data_seg()
-#endif
-
-static int DllInit(void)
-{
-#if defined(_WIN32_WINNT)
-	union	{ int(*f)(void); BYTE *p; } t = { DllInit };
-        HANDLE	hModuleSnap = INVALID_HANDLE_VALUE;
-	IMAGE_DOS_HEADER *dos_header;
-	IMAGE_NT_HEADERS *nt_headers;
-	MODULEENTRY32 me32 = {sizeof(me32)};
-
-	hModuleSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE,0);
-	if (hModuleSnap != INVALID_HANDLE_VALUE &&
-	    Module32First(hModuleSnap,&me32)) do
-		{
-		if (t.p >= me32.modBaseAddr &&
-		    t.p <  me32.modBaseAddr+me32.modBaseSize)
-			{
-			dos_header=(IMAGE_DOS_HEADER *)me32.modBaseAddr;
-			if (dos_header->e_magic==IMAGE_DOS_SIGNATURE)
-				{
-				nt_headers=(IMAGE_NT_HEADERS *)
-					((BYTE *)dos_header+dos_header->e_lfanew);
-				if (nt_headers->Signature==IMAGE_NT_SIGNATURE &&
-				    me32.modBaseAddr!=(BYTE*)nt_headers->OptionalHeader.ImageBase)
-					OPENSSL_NONPIC_relocated=1;
-				}
-			break;
-			}
-		} while (Module32Next(hModuleSnap,&me32));
-
-	if (hModuleSnap != INVALID_HANDLE_VALUE)
-		CloseHandle(hModuleSnap);
-#endif
-	OPENSSL_cpuid_setup();
-	return 0;
-}
-
-#else
-
 #ifdef __CYGWIN__
 /* pick DLL_[PROCESS|THREAD]_[ATTACH|DETACH] definitions */
 #include <windows.h>
+/* this has side-effect of _WIN32 getting defined, which otherwise
+ * is mutually exclusive with __CYGWIN__... */
 #endif
 
 /* All we really need to do is remove the 'error' state when a thread
@@ -396,7 +211,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason,
 	case DLL_THREAD_ATTACH:
 		break;
 	case DLL_THREAD_DETACH:
-		ERR_remove_state(0);
 		break;
 	case DLL_PROCESS_DETACH:
 		break;
@@ -405,16 +219,37 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason,
 	}
 #endif
 
-#endif
-
 #if defined(_WIN32) && !defined(__CYGWIN__)
 #include <tchar.h>
+#include <signal.h>
+#ifdef __WATCOMC__
+#if defined(_UNICODE) || defined(__UNICODE__)
+#define _vsntprintf _vsnwprintf
+#else
+#define _vsntprintf _vsnprintf
+#endif
+#endif
+#ifdef _MSC_VER
+#define alloca _alloca
+#endif
 
 #if defined(_WIN32_WINNT) && _WIN32_WINNT>=0x0333
 int OPENSSL_isservice(void)
 { HWINSTA h;
   DWORD len;
   WCHAR *name;
+  static union { void *p; int (*f)(void); } _OPENSSL_isservice = { NULL };
+
+    if (_OPENSSL_isservice.p == NULL) {
+	HANDLE h = GetModuleHandle(NULL);
+	if (h != NULL)
+	    _OPENSSL_isservice.p = GetProcAddress(h,"_OPENSSL_isservice");
+	if (_OPENSSL_isservice.p == NULL)
+	    _OPENSSL_isservice.p = (void *)-1;
+    }
+
+    if (_OPENSSL_isservice.p != (void *)-1)
+	return (*_OPENSSL_isservice.f)();
 
     (void)GetDesktopWindow(); /* return value is ignored */
 
@@ -427,11 +262,7 @@ int OPENSSL_isservice(void)
 
     if (len>512) return -1;		/* paranoia */
     len++,len&=~1;			/* paranoia */
-#ifdef _MSC_VER
-    name=(WCHAR *)_alloca(len+sizeof(WCHAR));
-#else
     name=(WCHAR *)alloca(len+sizeof(WCHAR));
-#endif
     if (!GetUserObjectInformationW (h,UOI_NAME,name,len,&len))
 	return -1;
 
@@ -462,8 +293,12 @@ void OPENSSL_showfatal (const char *fmta,...)
     if ((h=GetStdHandle(STD_ERROR_HANDLE)) != NULL &&
 	GetFileType(h)!=FILE_TYPE_UNKNOWN)
     {	/* must be console application */
+	int   len;
+	DWORD out;
+
 	va_start (ap,fmta);
-	vfprintf (stderr,fmta,ap);
+	len=_vsnprintf((char *)buf,sizeof(buf),fmt,ap);
+	WriteFile(h,buf,len<0?sizeof(buf):(DWORD)len,&out,NULL);
 	va_end (ap);
 	return;
     }
@@ -476,11 +311,7 @@ void OPENSSL_showfatal (const char *fmta,...)
       size_t len_0=strlen(fmta)+1,i;
       WCHAR *fmtw;
 
-#ifdef _MSC_VER
-	fmtw = (WCHAR *)_alloca (len_0*sizeof(WCHAR));
-#else
-	fmtw = (WCHAR *)alloca (len_0*sizeof(WCHAR));
-#endif
+	fmtw = (WCHAR *)alloca(len_0*sizeof(WCHAR));
 	if (fmtw == NULL) { fmt=(const TCHAR *)L"no stack?"; break; }
 
 #ifndef OPENSSL_NO_MULTIBYTE
@@ -513,7 +344,7 @@ void OPENSSL_showfatal (const char *fmta,...)
 
 #if defined(_WIN32_WINNT) && _WIN32_WINNT>=0x0333
     /* this -------------v--- guards NT-specific calls */
-    if (GetVersion() < 0x80000000 && OPENSSL_isservice())
+    if (GetVersion() < 0x80000000 && OPENSSL_isservice() > 0)
     {	HANDLE h = RegisterEventSource(0,_T("OPENSSL"));
 	const TCHAR *pmsg=buf;
 	ReportEvent(h,EVENTLOG_ERROR_TYPE,0,0,0,1,0,&pmsg,0);
@@ -528,7 +359,15 @@ void OPENSSL_showfatal (const char *fmta,...)
 { va_list ap;
 
     va_start (ap,fmta);
+#if defined(OPENSSL_SYS_VXWORKS)
+    {
+	char buf[256];
+	vsnprintf(buf,sizeof(buf),fmta,ap);
+	printf("%s",buf);
+    }
+#else 
     vfprintf (stderr,fmta,ap);
+#endif
     va_end (ap);
 }
 int OPENSSL_isservice (void) { return 0; }
@@ -539,7 +378,17 @@ void OpenSSLDie(const char *file,int line,const char *assertion)
 	OPENSSL_showfatal(
 		"%s(%d): OpenSSL internal error, assertion failed: %s\n",
 		file,line,assertion);
+#if !defined(_WIN32) || defined(__CYGWIN__)
 	abort();
+#else
+	/* Win32 abort() customarily shows a dialog, but we just did that... */
+#ifdef SIGABRT
+	raise(SIGABRT);
+#endif
+	_exit(3);
+#endif
 	}
 
+#ifndef OPENSSL_FIPSCANISTER
 void *OPENSSL_stderr(void)	{ return stderr; }
+#endif
